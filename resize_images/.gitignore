@@ -1,0 +1,15 @@
+# Environnement virtuel Python
+venv/
+env/
+.venv/
+
+# Fichiers Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Dossiers de sortie de test
+resized/
+*_resized/
