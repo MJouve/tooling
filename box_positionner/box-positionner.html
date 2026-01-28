@@ -224,6 +224,8 @@
     let resizeBoxStart = null; // {x, y, w, h} en [0,1]
     let resizeMouseStart = null; // {x, y} en px
     let resizeDirection = null; // 'n','s','e','w','ne','nw','se','sw'
+    let movingChildrenOffsets = null; // [{id, dx, dy}] pour déplacement du parent
+    let resizingChildrenRel = null; // [{id, relX, relY, relW, relH}] pour resize du parent
 
     function reset() {
       boxes = [];
@@ -288,6 +290,13 @@
           moving = true;
           movingBoxStart = { x: box.x, y: box.y };
           movingMouseStart = { x: mouseX, y: mouseY };
+          // mémoriser les offsets des enfants pour que leurs coordonnées relatives restent constantes
+          const children = boxes.filter(b => b.parentId === editBoxId);
+          movingChildrenOffsets = children.map(c => ({
+            id: c.id,
+            dx: c.x - box.x,
+            dy: c.y - box.y,
+          }));
           document.addEventListener('mousemove', onMoveBox);
           document.addEventListener('mouseup', onMoveBoxEnd);
           return;
@@ -411,6 +420,16 @@
       box.x = newX;
       box.y = newY;
 
+      // déplacer aussi les enfants en gardant leurs offsets relatifs constants
+      if (movingChildrenOffsets && movingChildrenOffsets.length) {
+        movingChildrenOffsets.forEach(childInfo => {
+          const child = boxes.find(b => b.id === childInfo.id);
+          if (!child) return;
+          child.x = box.x + childInfo.dx;
+          child.y = box.y + childInfo.dy;
+        });
+      }
+
       refreshOverlay();
       renderList();
     }
@@ -420,6 +439,7 @@
       moving = false;
       movingBoxStart = null;
       movingMouseStart = null;
+      movingChildrenOffsets = null;
       document.removeEventListener('mousemove', onMoveBox);
       document.removeEventListener('mouseup', onMoveBoxEnd);
     }
@@ -432,6 +452,15 @@
       resizeDirection = direction;
       resizeBoxStart = { x: box.x, y: box.y, w: box.w, h: box.h };
       resizeMouseStart = { x: mouseX - r.left, y: mouseY - r.top };
+       // mémoriser les coordonnées relatives des enfants pour les garder cohérentes
+      const children = boxes.filter(b => b.parentId === boxId && box.w > 0 && box.h > 0);
+      resizingChildrenRel = children.map(c => ({
+        id: c.id,
+        relX: (c.x - box.x) / box.w,
+        relY: (c.y - box.y) / box.h,
+        relW: c.w / box.w,
+        relH: c.h / box.h,
+      }));
       document.addEventListener('mousemove', onResizeBox);
       document.addEventListener('mouseup', onResizeBoxEnd);
     }
@@ -482,6 +511,18 @@
       box.w = w;
       box.h = h;
 
+      // ajuster les enfants pour conserver leurs ratios relatifs au parent
+      if (resizingChildrenRel && resizingChildrenRel.length) {
+        resizingChildrenRel.forEach(childInfo => {
+          const child = boxes.find(b => b.id === childInfo.id);
+          if (!child) return;
+          child.x = box.x + childInfo.relX * box.w;
+          child.y = box.y + childInfo.relY * box.h;
+          child.w = childInfo.relW * box.w;
+          child.h = childInfo.relH * box.h;
+        });
+      }
+
       refreshOverlay();
       renderList();
     }
@@ -492,6 +533,7 @@
       resizeBoxStart = null;
       resizeMouseStart = null;
       resizeDirection = null;
+      resizingChildrenRel = null;
       document.removeEventListener('mousemove', onResizeBox);
       document.removeEventListener('mouseup', onResizeBoxEnd);
     }
