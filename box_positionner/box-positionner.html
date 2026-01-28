@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Positionneur de boîtes</title>
+  <style>
+    html, body {
+      height: 100%;
+    }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 16px;
+      background: #111827;
+      color: #e5e7eb;
+      box-sizing: border-box;
+    }
+    h1 {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+    .toolbar {
+      margin-bottom: 12px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .toolbar label {
+      font-size: 14px;
+    }
+    input[type="file"] {
+      font-size: 14px;
+    }
+    button {
+      background: #2563eb;
+      border: none;
+      color: white;
+      padding: 6px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #1d4ed8;
+    }
+    #main {
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      margin-top: 12px;
+      height: calc(100vh - 96px); /* titre + toolbar + marges */
+    }
+    #imageContainer {
+      position: relative;
+      flex: 1;
+      max-width: 100%;
+      background: #020617;
+      border-radius: 8px;
+      padding: 8px;
+      border: 1px solid #1f2937;
+      overflow: hidden;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+    #imageWrapper {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    #imageWrapper img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border-radius: 4px;
+      object-fit: contain;
+    }
+    #overlay {
+      position: absolute;
+      inset: 0;
+      /* autoriser les clics sur la zone de dessin */
+      pointer-events: auto;
+      cursor: crosshair;
+    }
+    .box {
+      position: absolute;
+      border: 2px solid #f97316;
+      box-sizing: border-box;
+      background: rgba(249, 115, 22, 0.12);
+      pointer-events: auto;
+      cursor: pointer;
+    }
+    .box.selected {
+      border-color: #22c55e;
+      background: rgba(34, 197, 94, 0.16);
+    }
+    .box.editing {
+      outline: 2px dashed #38bdf8;
+      outline-offset: 1px;
+    }
+    .resize-handle {
+      position: absolute;
+      width: 7px;
+      height: 7px;
+      background: #f97316;
+      border-radius: 9999px;
+      border: 1px solid #0f172a;
+      box-sizing: border-box;
+      cursor: pointer;
+      z-index: 30;
+    }
+    .box-label {
+      position: absolute;
+      left: 0;
+      top: 0;
+      background: rgba(15, 23, 42, 0.9);
+      color: #e5e7eb;
+      font-size: 10px;
+      padding: 1px 4px;
+      border-bottom-right-radius: 4px;
+    }
+    #infoPanel {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 360px;
+      max-width: 80vw;
+      max-height: 70vh;
+      background: rgba(15, 23, 42, 0.96);
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      z-index: 20;
+    }
+    #infoPanel h2 {
+      font-size: 14px;
+      margin: 0 0 4px 0;
+    }
+    #boxesList {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      white-space: pre;
+      background: #020617;
+      border-radius: 4px;
+      padding: 6px;
+      border: 1px solid #1f2937;
+      max-height: 55vh;
+      overflow: auto;
+    }
+    .small {
+      font-size: 12px;
+      color: #9ca3af;
+    }
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <h1>Positionneur de boîtes (% sur image et parent)</h1>
+
+  <div class="toolbar">
+    <label>
+      Image :
+      <input type="file" id="fileInput" accept="image/*" />
+    </label>
+    <button id="clearBtn">Effacer les boîtes</button>
+    <button id="copyBtn">Copier JSON</button>
+    <button id="toggleInfoBtn">Afficher les données</button>
+    <label class="small">
+      Nom sélectionné :
+      <input id="nameInput" type="text" style="font-size: 12px; padding: 2px 4px; border-radius: 3px; border: 1px solid #4b5563; background:#020617; color:#e5e7eb; width: 160px;" disabled />
+    </label>
+    <button id="deleteBoxBtn" disabled>Supprimer la boîte</button>
+    <span class="small">
+      Astuce : bouton P = parent, clic sur le numéro = déplacement / sélection.
+    </span>
+  </div>
+
+  <div id="main">
+    <div id="imageContainer">
+      <div id="imageWrapper"></div>
+      <div id="infoPanel" class="hidden">
+        <h2>Boîtes</h2>
+        <div id="boxesList">Charge une image puis trace une boîte en glissant la souris.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const imageWrapper = document.getElementById('imageWrapper');
+    const imageContainer = document.getElementById('imageContainer');
+    const clearBtn = document.getElementById('clearBtn');
+    const copyBtn = document.getElementById('copyBtn');
+    const toggleInfoBtn = document.getElementById('toggleInfoBtn');
+    const nameInput = document.getElementById('nameInput');
+    const deleteBoxBtn = document.getElementById('deleteBoxBtn');
+    const boxesList = document.getElementById('boxesList');
+    const infoPanel = document.getElementById('infoPanel');
+
+    let img = null;
+    let overlay = null;
+    let drawing = false;
+    let startX = 0;
+    let startY = 0;
+    let currentBoxEl = null;
+    let boxes = []; // {id, name?, x, y, w, h, parentId?} en [0,1]
+    let nextId = 1;
+    // parent "sélectionné" pour les futurs enfants, mais la relation parent/enfant
+    // est stockée de façon persistante dans boxes[i].parentId
+    let selectedParentId = null;
+    // boîte en cours d'édition (déplacement / redimensionnement)
+    let editBoxId = null;
+    let moving = false;
+    let movingBoxStart = null; // {x, y} en [0,1]
+    let movingMouseStart = null; // {x, y} en px relatifs à l'overlay
+    let infoVisible = false;
+    let resizing = false;
+    let resizeBoxStart = null; // {x, y, w, h} en [0,1]
+    let resizeMouseStart = null; // {x, y} en px
+    let resizeDirection = null; // 'n','s','e','w','ne','nw','se','sw'
+
+    function reset() {
+      boxes = [];
+      nextId = 1;
+      selectedParentId = null;
+      imageWrapper.innerHTML = '';
+      boxesList.textContent = 'Charge une image puis trace une boîte en glissant la souris.';
+      img = null;
+      overlay = null;
+      infoVisible = false;
+      infoPanel.classList.add('hidden');
+      toggleInfoBtn.textContent = 'Afficher les données';
+      updateSelectionControls();
+    }
+
+    fileInput.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      reset();
+
+      img = new Image();
+      img.onload = () => {
+        imageWrapper.appendChild(img);
+
+        overlay = document.createElement('div');
+        overlay.id = 'overlay';
+        imageWrapper.appendChild(overlay);
+
+        overlay.addEventListener('mousedown', onMouseDown);
+        // s'assurer que les boîtes suivent bien la taille finale de l'image
+        refreshOverlay();
+      };
+      img.src = url;
+      img.style.display = 'block';
+    });
+
+    function onMouseDown(e) {
+      if (!img || !overlay) return;
+
+      const r = overlay.getBoundingClientRect();
+      const mouseX = e.clientX - r.left;
+      const mouseY = e.clientY - r.top;
+      const rx = mouseX / r.width;
+      const ry = mouseY / r.height;
+
+      // clic sur les contrôles du label (P / numéro) ou sur une poignée de resize → pas de dessin/déplacement
+      if (
+        e.target.classList &&
+        (e.target.classList.contains('box-parent-btn') ||
+          e.target.classList.contains('resize-handle') ||
+          e.target.classList.contains('box-label') ||
+          e.target.classList.contains('box-label-number'))
+      ) {
+        return;
+      }
+
+      // si une boîte est en mode édition et que l'on clique dedans → on la déplace
+      if (editBoxId != null) {
+        const box = boxes.find(b => b.id === editBoxId);
+        if (box && rx >= box.x && ry >= box.y && rx <= box.x + box.w && ry <= box.y + box.h) {
+          moving = true;
+          movingBoxStart = { x: box.x, y: box.y };
+          movingMouseStart = { x: mouseX, y: mouseY };
+          document.addEventListener('mousemove', onMoveBox);
+          document.addEventListener('mouseup', onMoveBoxEnd);
+          return;
+        }
+      }
+
+      // sinon, on commence à tracer une nouvelle boîte
+      drawing = true;
+
+      startX = mouseX;
+      startY = mouseY;
+
+      currentBoxEl = document.createElement('div');
+      currentBoxEl.className = 'box';
+      const label = document.createElement('div');
+      label.className = 'box-label';
+      label.textContent = '…';
+      currentBoxEl.appendChild(label);
+
+      overlay.appendChild(currentBoxEl);
+
+      currentBoxEl.style.left = startX + 'px';
+      currentBoxEl.style.top = startY + 'px';
+      currentBoxEl.style.width = '0px';
+      currentBoxEl.style.height = '0px';
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    }
+
+    function onMouseMove(e) {
+      if (!drawing || !overlay || !currentBoxEl) return;
+      const r = overlay.getBoundingClientRect();
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      let w = x - startX;
+      let h = y - startY;
+
+      const left = w < 0 ? x : startX;
+      const top = h < 0 ? y : startY;
+      const width = Math.abs(w);
+      const height = Math.abs(h);
+
+      currentBoxEl.style.left = left + 'px';
+      currentBoxEl.style.top = top + 'px';
+      currentBoxEl.style.width = width + 'px';
+      currentBoxEl.style.height = height + 'px';
+    }
+
+    function onMouseUp(e) {
+      if (!drawing || !overlay || !currentBoxEl) return;
+
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      drawing = false;
+
+      const r = overlay.getBoundingClientRect();
+      const b = currentBoxEl.getBoundingClientRect();
+
+      const absLeft = b.left - r.left;
+      const absTop = b.top - r.top;
+      const absW = b.width;
+      const absH = b.height;
+
+      if (absW < 5 || absH < 5) {
+        // trop petit → on annule
+        overlay.removeChild(currentBoxEl);
+        currentBoxEl = null;
+        return;
+      }
+
+      const x = absLeft / r.width;
+      const y = absTop / r.height;
+      const w = absW / r.width;
+      const h = absH / r.height;
+
+      const id = nextId++;
+
+      // on fige la relation parent/enfant au moment de la création
+      let logicalParentId = selectedParentId;
+      if (logicalParentId != null) {
+        const parent = boxes.find(b => b.id === logicalParentId);
+        if (!parent || !inParent({ x, y, w, h }, parent)) {
+          logicalParentId = null;
+        }
+      }
+
+      boxes.push({ id, name: '', x, y, w, h, parentId: logicalParentId });
+      currentBoxEl.dataset.id = id;
+
+      const label = currentBoxEl.querySelector('.box-label');
+      label.textContent = '#' + id;
+
+      currentBoxEl = null;
+      refreshOverlay();
+      renderList();
+    }
+
+    function onMoveBox(e) {
+      if (!moving || !overlay || editBoxId == null) return;
+      const box = boxes.find(b => b.id === editBoxId);
+      if (!box) return;
+
+      const r = overlay.getBoundingClientRect();
+      const mouseX = e.clientX - r.left;
+      const mouseY = e.clientY - r.top;
+
+      const dxPx = mouseX - movingMouseStart.x;
+      const dyPx = mouseY - movingMouseStart.y;
+
+      const dx = dxPx / r.width;
+      const dy = dyPx / r.height;
+
+      let newX = movingBoxStart.x + dx;
+      let newY = movingBoxStart.y + dy;
+
+      // on garde la boîte dans les bornes de l'image
+      newX = Math.max(0, Math.min(1 - box.w, newX));
+      newY = Math.max(0, Math.min(1 - box.h, newY));
+
+      box.x = newX;
+      box.y = newY;
+
+      refreshOverlay();
+      renderList();
+    }
+
+    function onMoveBoxEnd() {
+      if (!moving) return;
+      moving = false;
+      movingBoxStart = null;
+      movingMouseStart = null;
+      document.removeEventListener('mousemove', onMoveBox);
+      document.removeEventListener('mouseup', onMoveBoxEnd);
+    }
+
+    function startResize(boxId, direction, mouseX, mouseY) {
+      const box = boxes.find(b => b.id === boxId);
+      if (!box || !overlay) return;
+      const r = overlay.getBoundingClientRect();
+      resizing = true;
+      resizeDirection = direction;
+      resizeBoxStart = { x: box.x, y: box.y, w: box.w, h: box.h };
+      resizeMouseStart = { x: mouseX - r.left, y: mouseY - r.top };
+      document.addEventListener('mousemove', onResizeBox);
+      document.addEventListener('mouseup', onResizeBoxEnd);
+    }
+
+    function onResizeBox(e) {
+      if (!resizing || !overlay || !resizeBoxStart || !resizeDirection) return;
+      const box = boxes.find(b => b.id === editBoxId);
+      if (!box) return;
+
+      const r = overlay.getBoundingClientRect();
+      const mouseX = e.clientX - r.left;
+      const mouseY = e.clientY - r.top;
+
+      const dxPx = mouseX - resizeMouseStart.x;
+      const dyPx = mouseY - resizeMouseStart.y;
+
+      const dx = dxPx / r.width;
+      const dy = dyPx / r.height;
+
+      let { x, y, w, h } = resizeBoxStart;
+      const minSize = 0.01;
+
+      if (resizeDirection.includes('e')) {
+        const newW = Math.max(minSize, Math.min(1 - x, w + dx));
+        w = newW;
+      }
+      if (resizeDirection.includes('s')) {
+        const newH = Math.max(minSize, Math.min(1 - y, h + dy));
+        h = newH;
+      }
+      if (resizeDirection.includes('w')) {
+        let newX = x + dx;
+        newX = Math.min(newX, x + w - minSize);
+        newX = Math.max(0, newX);
+        w = x + w - newX;
+        x = newX;
+      }
+      if (resizeDirection.includes('n')) {
+        let newY = y + dy;
+        newY = Math.min(newY, y + h - minSize);
+        newY = Math.max(0, newY);
+        h = y + h - newY;
+        y = newY;
+      }
+
+      box.x = x;
+      box.y = y;
+      box.w = w;
+      box.h = h;
+
+      refreshOverlay();
+      renderList();
+    }
+
+    function onResizeBoxEnd() {
+      if (!resizing) return;
+      resizing = false;
+      resizeBoxStart = null;
+      resizeMouseStart = null;
+      resizeDirection = null;
+      document.removeEventListener('mousemove', onResizeBox);
+      document.removeEventListener('mouseup', onResizeBoxEnd);
+    }
+
+    function setParent(id) {
+      selectedParentId = (selectedParentId === id) ? null : id;
+      refreshOverlay();
+      renderList();
+    }
+
+    function setEditBox(id) {
+      editBoxId = (editBoxId === id) ? null : id;
+      refreshOverlay();
+      renderList();
+      updateSelectionControls();
+    }
+
+    function updateSelectionControls() {
+      if (editBoxId != null) {
+        const box = boxes.find(b => b.id === editBoxId);
+        if (!box) {
+          nameInput.value = '';
+          nameInput.disabled = true;
+          deleteBoxBtn.disabled = true;
+          return;
+        }
+        nameInput.disabled = false;
+        deleteBoxBtn.disabled = false;
+        nameInput.value = box.name || '';
+      } else {
+        nameInput.value = '';
+        nameInput.disabled = true;
+        deleteBoxBtn.disabled = true;
+      }
+    }
+
+    function refreshOverlay() {
+      if (!overlay) return;
+      // recrée les boîtes à partir du modèle (pour être sûr)
+      const old = Array.from(overlay.querySelectorAll('.box'));
+      old.forEach(el => overlay.removeChild(el));
+
+      const r = overlay.getBoundingClientRect();
+      boxes.forEach(box => {
+        const el = document.createElement('div');
+        el.className = 'box';
+        if (box.id === selectedParentId) el.classList.add('selected');
+        if (box.id === editBoxId) el.classList.add('editing');
+
+        const left = box.x * r.width;
+        const top = box.y * r.height;
+        const w = box.w * r.width;
+        const h = box.h * r.height;
+
+        el.style.left = left + 'px';
+        el.style.top = top + 'px';
+        el.style.width = w + 'px';
+        el.style.height = h + 'px';
+
+        const label = document.createElement('div');
+        label.className = 'box-label';
+
+        const numberSpan = document.createElement('span');
+        numberSpan.className = 'box-label-number';
+        numberSpan.textContent = '#' + box.id;
+        numberSpan.style.textDecoration = box.id === editBoxId ? 'underline' : 'none';
+        numberSpan.style.cursor = 'pointer';
+        numberSpan.title = 'Cliquer pour déplacer / sélectionner cette boîte';
+        numberSpan.addEventListener('click', e => {
+          e.stopPropagation();
+          setEditBox(box.id);
+        });
+
+        label.appendChild(numberSpan);
+        label.append(' ');
+
+        // petit bouton pour définir cette boîte comme parent
+        const parentBtn = document.createElement('button');
+        parentBtn.textContent = 'P';
+        parentBtn.title = 'Définir comme parent';
+        parentBtn.className = 'box-parent-btn';
+        parentBtn.style.border = 'none';
+        parentBtn.style.padding = '0 3px';
+        parentBtn.style.marginLeft = '2px';
+        parentBtn.style.fontSize = '10px';
+        parentBtn.style.cursor = 'pointer';
+        parentBtn.style.background = '#0f172a';
+        parentBtn.style.color = '#e5e7eb';
+
+        parentBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          setParent(box.id);
+        });
+
+        label.appendChild(parentBtn);
+
+        // affichage du nom directement dans le label si défini
+        if (box.name && box.name.length) {
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent = ' ' + box.name;
+          nameSpan.style.marginLeft = '2px';
+          nameSpan.style.opacity = '0.85';
+          label.appendChild(nameSpan);
+        }
+        el.appendChild(label);
+
+        // poignées de redimensionnement uniquement pour la boîte en édition
+        if (box.id === editBoxId) {
+          const directions = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+          directions.forEach(dir => {
+            const handle = document.createElement('div');
+            handle.className = 'resize-handle';
+            handle.dataset.direction = dir;
+
+            const offset = 3; // marge par rapport au bord
+            if (dir.includes('n')) {
+              handle.style.top = (-offset) + 'px';
+            } else if (dir.includes('s')) {
+              handle.style.bottom = (-offset) + 'px';
+            } else {
+              handle.style.top = (h / 2 - 3) + 'px';
+            }
+
+            if (dir.includes('w')) {
+              handle.style.left = (-offset) + 'px';
+            } else if (dir.includes('e')) {
+              handle.style.right = (-offset) + 'px';
+            } else {
+              handle.style.left = (w / 2 - 3) + 'px';
+            }
+
+            // curseurs selon la direction
+            if (dir === 'n' || dir === 's') {
+              handle.style.cursor = 'ns-resize';
+            } else if (dir === 'e' || dir === 'w') {
+              handle.style.cursor = 'ew-resize';
+            } else if (dir === 'ne' || dir === 'sw') {
+              handle.style.cursor = 'nesw-resize';
+            } else if (dir === 'nw' || dir === 'se') {
+              handle.style.cursor = 'nwse-resize';
+            }
+
+            handle.addEventListener('mousedown', ev => {
+              ev.stopPropagation();
+              startResize(box.id, dir, ev.clientX, ev.clientY);
+            });
+
+            el.appendChild(handle);
+          });
+        }
+
+        el.dataset.id = box.id;
+
+        overlay.appendChild(el);
+      });
+    }
+
+    function inParent(child, parent) {
+      return (
+        child.x >= parent.x &&
+        child.y >= parent.y &&
+        child.x + child.w <= parent.x + parent.w &&
+        child.y + child.h <= parent.y + parent.h
+      );
+    }
+
+    function renderList() {
+      if (!boxes.length) {
+        boxesList.textContent = 'Aucune boîte. Trace une zone sur l’image.';
+        return;
+      }
+
+      const lines = [];
+      lines.push('Boîtes (valeurs en % de l’image, arrondies à 2 décimales)');
+      lines.push('');
+
+      boxes.forEach(box => {
+        const abs = {
+          name: box.name || undefined,
+          xPct: +(box.x * 100).toFixed(2),
+          yPct: +(box.y * 100).toFixed(2),
+          wPct: +(box.w * 100).toFixed(2),
+          hPct: +(box.h * 100).toFixed(2),
+        };
+
+        let rel = null;
+        if (box.parentId != null) {
+          const parent = boxes.find(b => b.id === box.parentId) || null;
+          if (parent && inParent(box, parent)) {
+            const dx = box.x - parent.x;
+            const dy = box.y - parent.y;
+            const rx = dx / parent.w;
+            const ry = dy / parent.h;
+            const rw = box.w / parent.w;
+            const rh = box.h / parent.h;
+            rel = {
+              xPct: +(rx * 100).toFixed(2),
+              yPct: +(ry * 100).toFixed(2),
+              wPct: +(rw * 100).toFixed(2),
+              hPct: +(rh * 100).toFixed(2),
+              parentId: parent.id,
+            };
+          }
+        }
+
+        const label = box.name && box.name.length
+          ? `#${box.id} (${box.name})`
+          : `#${box.id}`;
+
+        lines.push(
+          `${label} image: { x: ${abs.xPct}%, y: ${abs.yPct}%, w: ${abs.wPct}%, h: ${abs.hPct}% }`
+        );
+        if (rel) {
+          lines.push(
+            `   parent #${rel.parentId}: { x: ${rel.xPct}%, y: ${rel.yPct}%, w: ${rel.wPct}%, h: ${rel.hPct}% }`
+          );
+        }
+      });
+
+      if (selectedParentId != null) {
+        lines.push('');
+        lines.push(`Parent sélectionné : #${selectedParentId} (vert).`);
+        lines.push(`Toute boîte créée pendant cette sélection sera enfant de #${selectedParentId} si elle est géométriquement incluse dedans.`);
+      }
+      if (editBoxId != null) {
+        lines.push('');
+        lines.push(`Édition : #${editBoxId} (déplacement activé – cliquer/glisser à l’intérieur de cette boîte).`);
+      }
+
+      boxesList.textContent = lines.join('\n');
+    }
+
+    clearBtn.addEventListener('click', () => {
+      boxes = [];
+      nextId = 1;
+      selectedParentId = null;
+      if (overlay) {
+        const old = Array.from(overlay.querySelectorAll('.box'));
+        old.forEach(el => overlay.removeChild(el));
+      }
+      renderList();
+      updateSelectionControls();
+    });
+
+    toggleInfoBtn.addEventListener('click', () => {
+      infoVisible = !infoVisible;
+      if (infoVisible) {
+        infoPanel.classList.remove('hidden');
+        toggleInfoBtn.textContent = 'Masquer les données';
+      } else {
+        infoPanel.classList.add('hidden');
+        toggleInfoBtn.textContent = 'Afficher les données';
+      }
+    });
+
+    nameInput.addEventListener('input', () => {
+      if (editBoxId == null) return;
+      const box = boxes.find(b => b.id === editBoxId);
+      if (!box) return;
+      box.name = nameInput.value.trim();
+      refreshOverlay();
+      renderList();
+    });
+
+    deleteBoxBtn.addEventListener('click', () => {
+      if (editBoxId == null) return;
+      const idToDelete = editBoxId;
+      // on enlève la boîte sélectionnée
+      boxes = boxes.filter(b => b.id !== idToDelete);
+      // les enfants de cette boîte perdent leur parent (mais restent dans la liste)
+      boxes.forEach(b => {
+        if (b.parentId === idToDelete) {
+          b.parentId = null;
+        }
+      });
+      if (selectedParentId === idToDelete) {
+        selectedParentId = null;
+      }
+      editBoxId = null;
+      refreshOverlay();
+      renderList();
+      updateSelectionControls();
+    });
+
+    copyBtn.addEventListener('click', async () => {
+      if (!boxes.length) return;
+
+      const data = boxes.map(box => {
+        const abs = {
+          id: box.id,
+          name: box.name || undefined,
+          xPct: +(box.x * 100).toFixed(2),
+          yPct: +(box.y * 100).toFixed(2),
+          wPct: +(box.w * 100).toFixed(2),
+          hPct: +(box.h * 100).toFixed(2),
+        };
+
+        if (box.parentId != null) {
+          const parent = boxes.find(b => b.id === box.parentId) || null;
+          if (parent && inParent(box, parent)) {
+            const dx = box.x - parent.x;
+            const dy = box.y - parent.y;
+            const rx = dx / parent.w;
+            const ry = dy / parent.h;
+            const rw = box.w / parent.w;
+            const rh = box.h / parent.h;
+            abs.parent = {
+              parentId: parent.id,
+              xPct: +(rx * 100).toFixed(2),
+              yPct: +(ry * 100).toFixed(2),
+              wPct: +(rw * 100).toFixed(2),
+              hPct: +(rh * 100).toFixed(2),
+            };
+          }
+        }
+
+        return abs;
+      });
+
+      const json = JSON.stringify(data, null, 2);
+      try {
+        await navigator.clipboard.writeText(json);
+        alert('JSON copié dans le presse-papiers.');
+      } catch {
+        alert('Impossible de copier automatiquement. Copie manuelle :\n\n' + json);
+      }
+    });
+  </script>
+</body>
+</html>
