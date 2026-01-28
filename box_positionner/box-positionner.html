@@ -169,7 +169,9 @@
       <input type="file" id="fileInput" accept="image/*" />
     </label>
     <button id="clearBtn">Effacer les boîtes</button>
-    <button id="copyBtn">Copier JSON</button>
+    <button id="importBtn">Importer JSON</button>
+    <input type="file" id="jsonInput" accept=".json" style="display: none;" />
+    <button id="saveBtn">Enregistrer JSON</button>
     <button id="toggleInfoBtn">Afficher les données</button>
     <label class="small">
       Nom sélectionné :
@@ -196,7 +198,9 @@
     const imageWrapper = document.getElementById('imageWrapper');
     const imageContainer = document.getElementById('imageContainer');
     const clearBtn = document.getElementById('clearBtn');
-    const copyBtn = document.getElementById('copyBtn');
+    const importBtn = document.getElementById('importBtn');
+    const jsonInput = document.getElementById('jsonInput');
+    const saveBtn = document.getElementById('saveBtn');
     const toggleInfoBtn = document.getElementById('toggleInfoBtn');
     const nameInput = document.getElementById('nameInput');
     const deleteBoxBtn = document.getElementById('deleteBoxBtn');
@@ -692,11 +696,13 @@
     }
 
     function inParent(child, parent) {
+      // tolérance utile car on exporte/import en % arrondis (2 décimales)
+      const eps = 0.0005; // ~0.05% de la taille, suffit pour absorber les arrondis
       return (
-        child.x >= parent.x &&
-        child.y >= parent.y &&
-        child.x + child.w <= parent.x + parent.w &&
-        child.y + child.h <= parent.y + parent.h
+        child.x >= parent.x - eps &&
+        child.y >= parent.y - eps &&
+        child.x + child.w <= parent.x + parent.w + eps &&
+        child.y + child.h <= parent.y + parent.h + eps
       );
     }
 
@@ -722,7 +728,7 @@
         let rel = null;
         if (box.parentId != null) {
           const parent = boxes.find(b => b.id === box.parentId) || null;
-          if (parent && inParent(box, parent)) {
+          if (parent && parent.w > 0 && parent.h > 0) {
             const dx = box.x - parent.x;
             const dy = box.y - parent.y;
             const rx = dx / parent.w;
@@ -818,13 +824,124 @@
       updateSelectionControls();
     });
 
-    copyBtn.addEventListener('click', async () => {
-      if (!boxes.length) return;
+    importBtn.addEventListener('click', () => {
+      jsonInput.click();
+    });
 
-      const data = boxes.map(box => {
+    jsonInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+
+        if (!Array.isArray(data)) {
+          alert('Le fichier JSON doit contenir un tableau de boîtes.');
+          return;
+        }
+
+        // Réinitialiser les boîtes existantes
+        boxes = [];
+        nextId = 1;
+        selectedParentId = null;
+        editBoxId = null;
+
+        // Importer les boîtes
+        data.forEach(item => {
+          if (typeof item.xPct !== 'number' || typeof item.yPct !== 'number' ||
+              typeof item.wPct !== 'number' || typeof item.hPct !== 'number') {
+            console.warn('Boîte invalide ignorée:', item);
+            return;
+          }
+
+          // Convertir les % en valeurs [0,1]
+          const box = {
+            id: item.id || nextId++,
+            name: item.name || '',
+            x: item.xPct / 100,
+            y: item.yPct / 100,
+            w: item.wPct / 100,
+            h: item.hPct / 100,
+            parentId: null,
+            // stockage temporaire des valeurs relatives à l'import (si présentes)
+            _importParentRel: null
+          };
+
+          // parentId: on accepte l'ancien format (item.parent.parentId) et le nouveau (item.parentId)
+          if (item.parentId != null) {
+            box.parentId = item.parentId;
+          } else if (item.parent && item.parent.parentId != null) {
+            box.parentId = item.parent.parentId;
+          }
+
+          // si on a des valeurs relatives, on les garde pour reconstruire l'absolu proprement
+          if (
+            item.parent &&
+            item.parent.parentId != null &&
+            typeof item.parent.xPct === 'number' &&
+            typeof item.parent.yPct === 'number' &&
+            typeof item.parent.wPct === 'number' &&
+            typeof item.parent.hPct === 'number'
+          ) {
+            box._importParentRel = {
+              parentId: item.parent.parentId,
+              x: item.parent.xPct / 100,
+              y: item.parent.yPct / 100,
+              w: item.parent.wPct / 100,
+              h: item.parent.hPct / 100,
+            };
+          }
+
+          boxes.push(box);
+          if (box.id >= nextId) {
+            nextId = box.id + 1;
+          }
+        });
+
+        // Recalculer les absolus à partir du parent + relatif quand c'est possible (plus robuste aux arrondis)
+        boxes.forEach(box => {
+          if (!box._importParentRel) return;
+          const parent = boxes.find(b => b.id === box._importParentRel.parentId);
+          if (!parent || parent.w <= 0 || parent.h <= 0) return;
+          box.parentId = parent.id;
+          box.x = parent.x + box._importParentRel.x * parent.w;
+          box.y = parent.y + box._importParentRel.y * parent.h;
+          box.w = box._importParentRel.w * parent.w;
+          box.h = box._importParentRel.h * parent.h;
+        });
+
+        // Vérifier que les relations parent/enfant sont valides (avec tolérance)
+        boxes.forEach(box => {
+          if (box.parentId != null) {
+            const parent = boxes.find(b => b.id === box.parentId);
+            if (!parent || !inParent(box, parent)) {
+              // Relation invalide, on la supprime
+              box.parentId = null;
+            }
+          }
+          // nettoyage
+          if (box._importParentRel) delete box._importParentRel;
+        });
+
+        refreshOverlay();
+        renderList();
+        updateSelectionControls();
+        jsonInput.value = ''; // Réinitialiser l'input
+
+        alert(`Import réussi : ${boxes.length} boîte(s) chargée(s).`);
+      } catch (error) {
+        alert('Erreur lors de l\'import du JSON : ' + error.message);
+        console.error(error);
+      }
+    });
+
+    function buildExportData() {
+      return boxes.map(box => {
         const abs = {
           id: box.id,
           name: box.name || undefined,
+          parentId: box.parentId ?? null,
           xPct: +(box.x * 100).toFixed(2),
           yPct: +(box.y * 100).toFixed(2),
           wPct: +(box.w * 100).toFixed(2),
@@ -833,7 +950,7 @@
 
         if (box.parentId != null) {
           const parent = boxes.find(b => b.id === box.parentId) || null;
-          if (parent && inParent(box, parent)) {
+          if (parent && parent.w > 0 && parent.h > 0) {
             const dx = box.x - parent.x;
             const dy = box.y - parent.y;
             const rx = dx / parent.w;
@@ -852,14 +969,23 @@
 
         return abs;
       });
+    }
 
-      const json = JSON.stringify(data, null, 2);
-      try {
-        await navigator.clipboard.writeText(json);
-        alert('JSON copié dans le presse-papiers.');
-      } catch {
-        alert('Impossible de copier automatiquement. Copie manuelle :\n\n' + json);
-      }
+    saveBtn.addEventListener('click', () => {
+      if (!boxes.length) return;
+
+      const json = JSON.stringify(buildExportData(), null, 2);
+
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ts = new Date().toISOString().replaceAll(':', '-');
+      a.download = `boxes-${ts}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     });
   </script>
 </body>
