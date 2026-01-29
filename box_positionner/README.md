@@ -2,6 +2,63 @@
 
 Outil web pour dessiner des zones (boîtes) sur une image et exporter un JSON de positionnement (coordonnées en %), avec support parent/enfant.
 
+---
+
+## box-positionner.html — Outil principal de génération des boîtes
+
+Ouvrable directement dans un navigateur (fichier local ou servi par un serveur). C’est l’outil avec lequel on **dessine les zones** sur une maquette (capture d’écran, mockup, etc.) et on **exporte le JSON** utilisé ensuite par `split-layouts.js` et les composants (ex. LayoutView).
+
+### Démarrage
+
+1. Ouvrir **`box-positionner.html`** dans un navigateur.
+2. Charger une **image** (bouton « Image », type `image/*`). L’image sert de fond ; toutes les coordonnées sont en **% de sa largeur/hauteur**.
+3. Dessiner des boîtes en **glissant la souris** sur l’image (clic maintenu + drag). Une boîte trop petite (&lt; 5 px) est ignorée.
+
+### Barre d’outils
+
+| Action | Description |
+|--------|-------------|
+| **Image** | Sélection d’un fichier image (fond du canevas). |
+| **Effacer les boîtes** | Supprime toutes les boîtes (l’image reste). |
+| **Importer JSON** | Charge un JSON existant (même format que l’export). |
+| **Enregistrer JSON** | Exporte toutes les boîtes en JSON (coordonnées en %). |
+| **Afficher les données** | Affiche ou masque le panneau « Boîtes » (liste + % absolus/relatifs). |
+| **Nom sélectionné** | Nom de la boîte actuellement en édition (utilisé par LayoutView avec `layoutBoxName`). |
+| **Supprimer la boîte** | Supprime la boîte en cours d’édition (les enfants perdent leur parent). |
+
+### Hiérarchie parent / enfant
+
+- **Définir un parent** : cliquer sur le bouton **« P »** dans le label d’une boîte. La boîte devient **parent sélectionné** (bordure verte). Recliquer sur « P » désélectionne le parent.
+- **Créer des enfants** : tant qu’un parent est sélectionné, toute **nouvelle boîte dessinée à l’intérieur** de cette boîte devient automatiquement son **enfant** (`parentId` renseigné). Les coordonnées sont exportées à la fois en **% de l’image** et en **% du parent** (`parent.xPct`, etc.).
+
+### Édition d’une boîte
+
+- **Sélectionner pour édition** : cliquer sur le **numéro** (#1, #2, …) dans le label de la boîte. La boîte passe en mode édition (contour en pointillés, poignées de redimensionnement).
+- **Déplacer** : en mode édition, **glisser à l’intérieur** de la boîte pour la déplacer. Les **enfants** se déplacent avec elle (offsets relatifs conservés).
+- **Redimensionner** : en mode édition, utiliser les **poignées** sur les bords/coins (n, s, e, w, ne, nw, se, sw). Les **enfants** sont redimensionnés proportionnellement au parent.
+- **Nom** : une fois la boîte sélectionnée, saisir le nom dans « Nom sélectionné » (utile pour `layoutBoxName` dans LayoutView).
+- **Supprimer** : avec la boîte sélectionnée, cliquer sur « Supprimer la boîte ».
+
+*Astuce (affichée dans l’outil) : bouton P = parent ; clic sur le numéro = déplacement / sélection.*
+
+### Format d’export JSON
+
+Chaque boîte est un objet avec :
+
+- **`id`** : identifiant numérique.
+- **`name`** : optionnel, nom de la boîte.
+- **`parentId`** : `null` pour une racine, ou id du parent.
+- **`xPct`, `yPct`, `wPct`, `hPct`** : position et taille en **% de l’image** (0–100).
+- **`parent`** (si la boîte a un parent) : `{ parentId, xPct, yPct, wPct, hPct }` — coordonnées en **% du parent**.
+
+Le fichier exporté est un **tableau** de ces objets. C’est ce JSON complet qui est donné en entrée à **split-layouts.js** pour produire les layouts « un niveau » par boîte.
+
+### Import JSON
+
+L’outil accepte un JSON au même format (tableau de boîtes avec `xPct`, `yPct`, `wPct`, `hPct` en % image, et optionnellement `parentId` et `parent` pour les coordonnées relatives). Il recalcule les positions absolues à partir du parent si besoin, et redessine toutes les boîtes sur l’image chargée.
+
+---
+
 ## split-layouts.js
 
 Script pour découper un **JSON complet** (export de l’outil) en **plusieurs JSON “un niveau”** : un fichier par boîte non feuille, contenant uniquement ses **enfants directs** avec coordonnées **relatives au parent**. Pratique pour alimenter des composants (ex. React Native) qui reçoivent chacun leur layout en props.

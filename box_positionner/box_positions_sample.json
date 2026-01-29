@@ -1,6 +1,7 @@
 [
   {
     "id": 1,
+    "name": "boite parent 1",
     "parentId": null,
     "xPct": 1.19,
     "yPct": 4.52,
@@ -24,6 +25,7 @@
   },
   {
     "id": 3,
+    "name": "boite_parent 2",
     "parentId": 1,
     "xPct": 30.64,
     "yPct": 8.93,
@@ -84,6 +86,7 @@
   },
   {
     "id": 7,
+    "name": "boite_enfant",
     "parentId": 3,
     "xPct": 32.32,
     "yPct": 12.62,
