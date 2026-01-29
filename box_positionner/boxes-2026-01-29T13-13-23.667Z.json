@@ -1,0 +1,100 @@
+[
+  {
+    "id": 1,
+    "parentId": null,
+    "xPct": 1.19,
+    "yPct": 4.52,
+    "wPct": 54.09,
+    "hPct": 63.57
+  },
+  {
+    "id": 2,
+    "parentId": 1,
+    "xPct": 3.79,
+    "yPct": 8.93,
+    "wPct": 17.27,
+    "hPct": 37.5,
+    "parent": {
+      "parentId": 1,
+      "xPct": 4.8,
+      "yPct": 6.93,
+      "wPct": 31.93,
+      "hPct": 58.99
+    }
+  },
+  {
+    "id": 3,
+    "parentId": 1,
+    "xPct": 30.64,
+    "yPct": 8.93,
+    "wPct": 17.6,
+    "hPct": 41.67,
+    "parent": {
+      "parentId": 1,
+      "xPct": 54.45,
+      "yPct": 6.93,
+      "wPct": 32.53,
+      "hPct": 65.54
+    }
+  },
+  {
+    "id": 4,
+    "parentId": 2,
+    "xPct": 8.28,
+    "yPct": 16.43,
+    "wPct": 7.74,
+    "hPct": 19.88,
+    "parent": {
+      "parentId": 2,
+      "xPct": 26.02,
+      "yPct": 20,
+      "wPct": 44.83,
+      "hPct": 53.02
+    }
+  },
+  {
+    "id": 5,
+    "parentId": 2,
+    "xPct": 16.46,
+    "yPct": 13.1,
+    "wPct": 2.38,
+    "hPct": 14.64,
+    "parent": {
+      "parentId": 2,
+      "xPct": 73.35,
+      "yPct": 11.11,
+      "wPct": 13.79,
+      "hPct": 39.05
+    }
+  },
+  {
+    "id": 6,
+    "parentId": 2,
+    "xPct": 17.33,
+    "yPct": 31.19,
+    "wPct": 1.52,
+    "hPct": 6.19,
+    "parent": {
+      "parentId": 2,
+      "xPct": 78.37,
+      "yPct": 59.37,
+      "wPct": 8.78,
+      "hPct": 16.51
+    }
+  },
+  {
+    "id": 7,
+    "parentId": 3,
+    "xPct": 32.32,
+    "yPct": 12.62,
+    "wPct": 7.42,
+    "hPct": 22.02,
+    "parent": {
+      "parentId": 3,
+      "xPct": 9.54,
+      "yPct": 8.86,
+      "wPct": 42.15,
+      "hPct": 52.86
+    }
+  }
+]

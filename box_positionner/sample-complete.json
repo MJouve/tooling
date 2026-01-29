@@ -1,0 +1,6 @@
+[
+  { "id": 1, "name": "profile", "parentId": null, "xPct": 0, "yPct": 0, "wPct": 50, "hPct": 100 },
+  { "id": 2, "name": "characteristics", "parentId": null, "xPct": 50, "yPct": 0, "wPct": 50, "hPct": 100 },
+  { "id": 3, "name": "avatar", "parentId": 1, "xPct": 5, "yPct": 2, "wPct": 40, "hPct": 30 },
+  { "id": 4, "name": "name", "parentId": 1, "xPct": 5, "yPct": 35, "wPct": 90, "hPct": 15 }
+]
