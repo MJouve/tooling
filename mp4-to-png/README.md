@@ -8,6 +8,10 @@ Outil en ligne de commande pour convertir des vidéos MP4 en sprite sheets PNG o
 - 🎨 Détection automatique du fond (couleur unie ou quadrillage checkerboard)
 - 👻 Suppression de fond avec canal alpha transparent
 - 📏 Redimensionnement intelligent avec préservation du ratio
+- 📐 **Largeur fixe** pour uniformiser toutes les frames
+- 📋 **Fichiers de configuration JSON** pour simplifier les générations batch
+- 🔢 **Spritesheets multilignes** pour organiser plusieurs animations dans un seul fichier
+- 🤖 **Génération batch automatique** avec vérification des fichiers requis
 - 🚀 Optimisé pour les apps React avec Capacitor
 - 💾 Export PNG optimisé avec compression
 
@@ -101,18 +105,63 @@ sudo ln -s $(pwd)/mp4-to-sprite.py /usr/local/bin/mp4-to-sprite
   --transparent
 ```
 
+#### 5. Largeur fixe (pour uniformiser toutes les frames)
+
+```bash
+./mp4-to-sprite.py video.mp4 \
+  --size=128 \
+  --width=128 \
+  --transparent
+```
+
+#### 6. Spritesheet multilignes (ajouter une ligne à un fichier existant)
+
+```bash
+# Première ligne (ligne 0)
+./mp4-to-sprite.py joyeux.mp4 --size=128 --width=128 --transparent --output=familier.png --line=0
+
+# Deuxième ligne (ligne 1)
+./mp4-to-sprite.py triste.mp4 --size=128 --width=128 --transparent --output=familier.png --line=1
+
+# Troisième ligne (ligne 2)
+./mp4-to-sprite.py neutre.mp4 --size=128 --width=128 --transparent --output=familier.png --line=2
+```
+
+#### 7. Utilisation avec fichier de configuration
+
+```bash
+# Créez config.json
+cat > config.json << EOF
+{
+  "size": 128,
+  "width": 128,
+  "transparent": true,
+  "tolerance": 30,
+  "fps": 12,
+  "start": 0,
+  "end": 1.5
+}
+EOF
+
+# Utilisez la config
+./mp4-to-sprite.py video.mp4 --config=config.json --output=avatar.png --line=3
+```
+
 ## ⚙️ Options
 
 | Option | Type | Défaut | Description |
 |--------|------|--------|-------------|
 | `input` | string | - | **Requis.** Fichier MP4 en entrée |
 | `--size` | int | 128 | Hauteur cible en pixels |
+| `--width` | int | - | Largeur fixe en pixels (force crop/pad si nécessaire) |
 | `--transparent` | flag | false | Active la détection et suppression du fond |
 | `--tolerance` | int | 30 | Tolérance de détection de couleur (0-255) |
 | `--start` | float | 0 | Temps de début en secondes |
 | `--end` | float | durée totale | Temps de fin en secondes |
 | `--fps` | int | 10 | Images par seconde à extraire |
-| `--output` | string | input-sprite.png | Nom du fichier de sortie |
+| `--output`, `-o` | string | input-sprite.png | Nom du fichier de sortie |
+| `--line` | int | - | Numéro de ligne (0-indexed) pour spritesheet multilignes |
+| `--config`, `-c` | string | - | Fichier de configuration JSON avec options par défaut |
 
 ### 💡 Conseils sur les options
 
@@ -135,6 +184,23 @@ sudo ln -s $(pwd)/mp4-to-sprite.py /usr/local/bin/mp4-to-sprite
 - Animation rapide: 15-24 fps
 - Animation normale: 10-12 fps (défaut)
 - Animation lente: 6-8 fps
+
+**`--width`**: Largeur fixe pour toutes les frames
+- Utile pour uniformiser les dimensions dans un spritesheet multilignes
+- Si l'image est plus large: crop centré
+- Si l'image est plus étroite: padding transparent centré
+- **Recommandé** pour les spritesheets multilignes
+
+**`--line`**: Position dans un spritesheet multilignes
+- Numéro de ligne (0-indexed) où placer l'animation
+- Si le fichier existe, l'animation est ajoutée à la ligne spécifiée
+- Si le fichier n'existe pas, il est créé avec la bonne hauteur
+- Les lignes manquantes sont automatiquement remplies de transparence
+
+**`--config`**: Fichier de configuration JSON
+- Permet de définir des options par défaut
+- Les arguments en ligne de commande ont toujours priorité
+- Utile pour les générations batch répétitives
 
 ## 🎨 Détection de fond
 
@@ -264,6 +330,85 @@ npm run build
 npx cap sync
 ```
 
+## 🎬 Génération batch avec spritesheets multilignes
+
+### Script de génération batch automatique
+
+Le script `generate-spritesheet-batch.py` permet de générer automatiquement un spritesheet multilignes en vérifiant que tous les fichiers requis sont présents.
+
+#### 1. Configurez la liste des fichiers requis
+
+Éditez `generate-spritesheet-batch.py` et modifiez la liste `REQUIRED_FILES` :
+
+```python
+REQUIRED_FILES = [
+    ("joyeux", 0, "Animation joyeuse"),
+    ("triste", 1, "Animation triste"),
+    ("neutre", 2, "Animation neutre"),
+    ("fatigue", 3, "Animation fatigue"),
+    # Ajoutez d'autres animations ici
+]
+```
+
+#### 2. Préparez vos vidéos
+
+Placez vos fichiers MP4 dans un dossier (ex: `./videos/`) :
+```
+videos/
+├── joyeux.mp4
+├── triste.mp4
+├── neutre.mp4
+└── fatigue.mp4
+```
+
+#### 3. Lancez la génération batch
+
+```bash
+./generate-spritesheet-batch.py ./videos --output=familier.png --size=128 --width=128
+```
+
+Le script va :
+- ✅ Vérifier que tous les fichiers requis sont présents
+- ⚠️ Afficher une alerte pour les fichiers manquants
+- 🎬 Générer le spritesheet multilignes automatiquement
+- 📊 Afficher un résumé avec le code React à utiliser
+
+#### 4. Exemple avec fichier de configuration
+
+```bash
+# Créez votre config
+cat > config-familiers.json << EOF
+{
+  "size": 128,
+  "width": 128,
+  "transparent": true,
+  "tolerance": 30,
+  "fps": 12
+}
+EOF
+
+# Lancez avec la config
+./generate-spritesheet-batch.py ./videos --output=familier.png --config=config-familiers.json
+```
+
+#### 5. Utilisation dans React
+
+Le script génère automatiquement le code React à utiliser :
+
+```javascript
+const spriteSheet = {
+  src: '/assets/familier.png',
+  frameHeight: 128,
+  frameWidth: 128,
+  animations: {
+    joyeux: { line: 0 },   // Animation joyeuse
+    triste: { line: 1 },   // Animation triste
+    neutre: { line: 2 },   // Animation neutre
+    fatigue: { line: 3 },  // Animation fatigue
+  }
+};
+```
+
 ## 🐛 Dépannage
 
 ### "ffmpeg n'est pas installé"
@@ -360,6 +505,60 @@ Exemple de résultats:
 ```bash
 ./mp4-to-sprite.py icon-loading.mp4 --size=32 --transparent --fps=15
 ```
+
+### Spritesheet multilignes pour familiers
+
+```bash
+# Créez un fichier de configuration
+cat > config-familiers.json << EOF
+{
+  "size": 128,
+  "width": 128,
+  "transparent": true,
+  "tolerance": 30,
+  "fps": 12
+}
+EOF
+
+# Méthode 1 : Génération manuelle ligne par ligne
+./mp4-to-sprite.py joyeux.mp4 --config=config-familiers.json --output=familier.png --line=0
+./mp4-to-sprite.py triste.mp4 --config=config-familiers.json --output=familier.png --line=1
+./mp4-to-sprite.py neutre.mp4 --config=config-familiers.json --output=familier.png --line=2
+./mp4-to-sprite.py fatigue.mp4 --config=config-familiers.json --output=familier.png --line=3
+
+# Méthode 2 : Génération batch automatique (recommandé)
+./generate-spritesheet-batch.py ./videos --output=familier.png --config=config-familiers.json
+```
+
+## 📄 Fichier de configuration JSON
+
+Vous pouvez créer un fichier JSON pour définir des options par défaut et éviter de les ressaisir à chaque fois.
+
+### Format du fichier
+
+```json
+{
+  "size": 128,
+  "width": 128,
+  "transparent": true,
+  "tolerance": 30,
+  "fps": 12,
+  "start": 0,
+  "end": 1.5
+}
+```
+
+### Utilisation
+
+```bash
+./mp4-to-sprite.py video.mp4 --config=config.json --output=avatar.png
+```
+
+Les arguments en ligne de commande ont toujours priorité sur le fichier de configuration.
+
+### Exemple de fichier
+
+Un fichier `config-example.json` est fourni dans le dépôt comme référence.
 
 ## 📝 Licence
 

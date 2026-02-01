@@ -326,6 +326,35 @@ def normalize_sprite_size(sprite, target_width, target_height):
     return normalized
 
 
+def remove_background_only(input_path, output_path, threshold=240):
+    """
+    Supprime uniquement le fond blanc d'une image sans découper ni redimensionner.
+    
+    Args:
+        input_path: Chemin de l'image source
+        output_path: Chemin de l'image de sortie
+        threshold: Seuil pour la détection du fond blanc (0-255)
+    """
+    # Charger l'image
+    print(f"📁 Chargement de l'image: {input_path}")
+    image = Image.open(input_path)
+    print(f"   Taille: {image.size[0]}x{image.size[1]} pixels")
+    
+    # Supprimer le fond blanc
+    print(f"🎨 Suppression du fond blanc (seuil: {threshold})...")
+    image = remove_white_background(image, threshold)
+    
+    # Créer le dossier de sortie si nécessaire
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+    
+    # Sauvegarder l'image
+    image.save(output_path, 'PNG')
+    print(f"✅ Image sauvegardée: {output_path}")
+    print(f"\n🎉 Terminé ! Fond blanc supprimé et sauvegardé dans {output_path}")
+
+
 def cut_sprites(input_path, output_dir, threshold=240, padding=5, merge_distance=20, 
                 min_size=200, normalize_size=None):
     """
@@ -448,6 +477,8 @@ Exemples:
   %(prog)s sprites.png -n auto                 # Normaliser à la taille du plus grand
   %(prog)s sprites.png -n 512x512              # Normaliser à 512x512px
   %(prog)s sprites.png --min-size 100 -n auto  # Filtrer + normaliser
+  %(prog)s image.png --remove-background-only  # Supprime uniquement le fond blanc
+  %(prog)s image.png --remove-background-only -o output.png  # Spécifier le fichier de sortie
         """
     )
     
@@ -500,6 +531,12 @@ Exemples:
              'ou "WIDTHxHEIGHT" (ex: "512x512") pour une taille fixe'
     )
     
+    parser.add_argument(
+        '--remove-background-only',
+        action='store_true',
+        help='Supprime uniquement le fond blanc sans découper ni redimensionner l\'image'
+    )
+    
     args = parser.parse_args()
     
     # Vérifier que le fichier existe
@@ -507,37 +544,63 @@ Exemples:
         print(f"❌ Erreur: Le fichier '{args.input}' n'existe pas")
         sys.exit(1)
     
-    # Si aucun dossier de sortie n'est spécifié, utiliser le nom du fichier sans extension
-    if args.output is None:
-        base_name = os.path.splitext(os.path.basename(args.input))[0]
-        args.output = base_name
-    
-    # Parser la normalisation
-    normalize_size = None
-    if args.normalize:
-        if args.normalize.lower() == "auto":
-            normalize_size = "auto"
+    # Si l'option --remove-background-only est activée
+    if args.remove_background_only:
+        # Déterminer le chemin de sortie
+        if args.output is None:
+            # Utiliser le nom du fichier avec "_no_bg" ajouté
+            base_name = os.path.splitext(os.path.basename(args.input))[0]
+            input_dir = os.path.dirname(args.input) or '.'
+            output_path = os.path.join(input_dir, f"{base_name}_no_bg.png")
         else:
-            try:
-                parts = args.normalize.lower().split('x')
-                if len(parts) == 2:
-                    normalize_size = (int(parts[0]), int(parts[1]))
-                else:
+            # Si c'est un dossier, créer un nom de fichier
+            if os.path.isdir(args.output) or args.output.endswith('/'):
+                base_name = os.path.splitext(os.path.basename(args.input))[0]
+                output_path = os.path.join(args.output, f"{base_name}_no_bg.png")
+            else:
+                # C'est un chemin de fichier
+                output_path = args.output
+        
+        try:
+            remove_background_only(args.input, output_path, args.threshold)
+        except Exception as e:
+            print(f"❌ Erreur: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+    else:
+        # Mode normal : découper les sprites
+        # Si aucun dossier de sortie n'est spécifié, utiliser le nom du fichier sans extension
+        if args.output is None:
+            base_name = os.path.splitext(os.path.basename(args.input))[0]
+            args.output = base_name
+        
+        # Parser la normalisation
+        normalize_size = None
+        if args.normalize:
+            if args.normalize.lower() == "auto":
+                normalize_size = "auto"
+            else:
+                try:
+                    parts = args.normalize.lower().split('x')
+                    if len(parts) == 2:
+                        normalize_size = (int(parts[0]), int(parts[1]))
+                    else:
+                        print(f"❌ Erreur: Format de normalisation invalide. Utilisez 'auto' ou 'WIDTHxHEIGHT'")
+                        sys.exit(1)
+                except ValueError:
                     print(f"❌ Erreur: Format de normalisation invalide. Utilisez 'auto' ou 'WIDTHxHEIGHT'")
                     sys.exit(1)
-            except ValueError:
-                print(f"❌ Erreur: Format de normalisation invalide. Utilisez 'auto' ou 'WIDTHxHEIGHT'")
-                sys.exit(1)
-    
-    # Découper les sprites
-    try:
-        cut_sprites(args.input, args.output, args.threshold, args.padding, args.merge,
-                   args.min_size, normalize_size)
-    except Exception as e:
-        print(f"❌ Erreur: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        
+        # Découper les sprites
+        try:
+            cut_sprites(args.input, args.output, args.threshold, args.padding, args.merge,
+                       args.min_size, normalize_size)
+        except Exception as e:
+            print(f"❌ Erreur: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
 
 
 if __name__ == '__main__':

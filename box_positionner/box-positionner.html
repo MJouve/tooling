@@ -231,6 +231,79 @@
     let movingChildrenOffsets = null; // [{id, dx, dy}] pour déplacement du parent
     let resizingChildrenRel = null; // [{id, relX, relY, relW, relH}] pour resize du parent
 
+    // Fonction helper pour obtenir les dimensions réelles de l'image affichée
+    // (en tenant compte de object-fit: contain)
+    function getImageDisplayDimensions() {
+      if (!img || !overlay) return { width: 0, height: 0, offsetX: 0, offsetY: 0 };
+      
+      const r = overlay.getBoundingClientRect();
+      const naturalW = img.naturalWidth;
+      const naturalH = img.naturalHeight;
+      
+      if (naturalW === 0 || naturalH === 0) {
+        return { width: r.width, height: r.height, offsetX: 0, offsetY: 0 };
+      }
+      
+      // Calculer les dimensions réelles de l'image affichée (avec object-fit: contain)
+      const displayRatio = r.width / r.height;
+      const imageRatio = naturalW / naturalH;
+      
+      let displayW, displayH, offsetX, offsetY;
+      
+      if (displayRatio > imageRatio) {
+        // La zone est plus large → l'image est limitée par la hauteur
+        displayH = r.height;
+        displayW = displayH * imageRatio;
+        offsetX = (r.width - displayW) / 2;
+        offsetY = 0;
+      } else {
+        // La zone est plus haute → l'image est limitée par la largeur
+        displayW = r.width;
+        displayH = displayW / imageRatio;
+        offsetX = 0;
+        offsetY = (r.height - displayH) / 2;
+      }
+      
+      return { width: displayW, height: displayH, offsetX, offsetY };
+    }
+    
+    // Convertit des coordonnées pixels (relatives à overlay) en % de l'image réelle
+    function pixelsToImagePercent(pxX, pxY, pxW, pxH) {
+      const dims = getImageDisplayDimensions();
+      if (dims.width === 0 || dims.height === 0) {
+        return { x: 0, y: 0, w: 0, h: 0 };
+      }
+      
+      // Convertir les coordonnées relatives à l'overlay en coordonnées relatives à l'image affichée
+      const relX = (pxX - dims.offsetX) / dims.width;
+      const relY = (pxY - dims.offsetY) / dims.height;
+      const relW = pxW / dims.width;
+      const relH = pxH / dims.height;
+      
+      // Clamper entre 0 et 1
+      return {
+        x: Math.max(0, Math.min(1, relX)),
+        y: Math.max(0, Math.min(1, relY)),
+        w: Math.max(0, Math.min(1, relW)),
+        h: Math.max(0, Math.min(1, relH))
+      };
+    }
+    
+    // Convertit des coordonnées % de l'image réelle en pixels (relatives à overlay)
+    function imagePercentToPixels(x, y, w, h) {
+      const dims = getImageDisplayDimensions();
+      if (dims.width === 0 || dims.height === 0) {
+        return { pxX: 0, pxY: 0, pxW: 0, pxH: 0 };
+      }
+      
+      return {
+        pxX: dims.offsetX + x * dims.width,
+        pxY: dims.offsetY + y * dims.height,
+        pxW: w * dims.width,
+        pxH: h * dims.height
+      };
+    }
+
     function reset() {
       boxes = [];
       nextId = 1;
@@ -273,8 +346,11 @@
       const r = overlay.getBoundingClientRect();
       const mouseX = e.clientX - r.left;
       const mouseY = e.clientY - r.top;
-      const rx = mouseX / r.width;
-      const ry = mouseY / r.height;
+      
+      // Convertir les coordonnées de la souris en % de l'image réelle
+      const coords = pixelsToImagePercent(mouseX, mouseY, 0, 0);
+      const rx = coords.x;
+      const ry = coords.y;
 
       // clic sur les contrôles du label (P / numéro) ou sur une poignée de resize → pas de dessin/déplacement
       if (
@@ -372,10 +448,12 @@
         return;
       }
 
-      const x = absLeft / r.width;
-      const y = absTop / r.height;
-      const w = absW / r.width;
-      const h = absH / r.height;
+      // Convertir en % de l'image réelle
+      const coords = pixelsToImagePercent(absLeft, absTop, absW, absH);
+      const x = coords.x;
+      const y = coords.y;
+      const w = coords.w;
+      const h = coords.h;
 
       const id = nextId++;
 
@@ -411,8 +489,10 @@
       const dxPx = mouseX - movingMouseStart.x;
       const dyPx = mouseY - movingMouseStart.y;
 
-      const dx = dxPx / r.width;
-      const dy = dyPx / r.height;
+      // Convertir le déplacement en pixels en % de l'image réelle
+      const dims = getImageDisplayDimensions();
+      const dx = dims.width > 0 ? dxPx / dims.width : 0;
+      const dy = dims.height > 0 ? dyPx / dims.height : 0;
 
       let newX = movingBoxStart.x + dx;
       let newY = movingBoxStart.y + dy;
@@ -481,8 +561,10 @@
       const dxPx = mouseX - resizeMouseStart.x;
       const dyPx = mouseY - resizeMouseStart.y;
 
-      const dx = dxPx / r.width;
-      const dy = dyPx / r.height;
+      // Convertir le déplacement en pixels en % de l'image réelle
+      const dims = getImageDisplayDimensions();
+      const dx = dims.width > 0 ? dxPx / dims.width : 0;
+      const dy = dims.height > 0 ? dyPx / dims.height : 0;
 
       let { x, y, w, h } = resizeBoxStart;
       const minSize = 0.01;
@@ -580,17 +662,18 @@
       const old = Array.from(overlay.querySelectorAll('.box'));
       old.forEach(el => overlay.removeChild(el));
 
-      const r = overlay.getBoundingClientRect();
       boxes.forEach(box => {
         const el = document.createElement('div');
         el.className = 'box';
         if (box.id === selectedParentId) el.classList.add('selected');
         if (box.id === editBoxId) el.classList.add('editing');
 
-        const left = box.x * r.width;
-        const top = box.y * r.height;
-        const w = box.w * r.width;
-        const h = box.h * r.height;
+        // Convertir les coordonnées % de l'image réelle en pixels pour l'affichage
+        const pixels = imagePercentToPixels(box.x, box.y, box.w, box.h);
+        const left = pixels.pxX;
+        const top = pixels.pxY;
+        const w = pixels.pxW;
+        const h = pixels.pxH;
 
         el.style.left = left + 'px';
         el.style.top = top + 'px';

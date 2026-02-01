@@ -1,0 +1,9 @@
+{
+  "size": 128,
+  "width": 128,
+  "transparent": true,
+  "tolerance": 30,
+  "fps": 12,
+  "start": 0,
+  "end": 1.5
+}
