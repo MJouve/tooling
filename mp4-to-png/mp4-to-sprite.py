@@ -13,6 +13,7 @@ from PIL import Image
 import tempfile
 import shutil
 import json
+from collections import deque
 
 def check_dependencies():
     """Vérifie que ffmpeg est installé"""
@@ -55,71 +56,166 @@ def extract_frames(video_path, start_time, end_time, fps, temp_dir):
     
     return frames
 
-def detect_background_color(image_path, sample_size=5):
+def detect_background_color(image_path, sample_size=5, detect_checkerboard=True):
     """
-    Détecte la couleur de fond en échantillonnant le coin supérieur gauche
-    Gère aussi les fonds quadrillés (checkerboard) gris/blanc
+    Détecte la couleur de fond en échantillonnant les bords de l'image
+    Gère aussi les fonds quadrillés (checkerboard) gris/blanc si activé
     """
     img = Image.open(image_path).convert('RGB')
+    width, height = img.size
     
-    # Échantillonne plusieurs pixels du coin supérieur gauche
+    # Échantillonne les bords de l'image (pas seulement le coin)
     colors = []
-    for x in range(sample_size):
-        for y in range(sample_size):
-            colors.append(img.getpixel((x, y)))
+    
+    # Bord supérieur
+    for x in range(min(sample_size * 10, width)):
+        colors.append(img.getpixel((x, 0)))
+    
+    # Bord inférieur
+    for x in range(min(sample_size * 10, width)):
+        colors.append(img.getpixel((x, height - 1)))
+    
+    # Bord gauche
+    for y in range(min(sample_size * 10, height)):
+        colors.append(img.getpixel((0, y)))
+    
+    # Bord droit
+    for y in range(min(sample_size * 10, height)):
+        colors.append(img.getpixel((width - 1, y)))
     
     # Détecte si c'est un pattern quadrillé (checkerboard)
     unique_colors = list(set(colors))
     
-    # Si on a 2 couleurs proches de gris clair et gris foncé -> c'est un checkerboard
-    if len(unique_colors) == 2:
+    # Si la détection de checkerboard est activée et qu'on a 2 couleurs, vérifie si c'est vraiment un checkerboard
+    if detect_checkerboard and len(unique_colors) == 2:
         r1, g1, b1 = unique_colors[0]
         r2, g2, b2 = unique_colors[1]
         
-        # Vérifie si ce sont des nuances de gris
+        # Vérifie si ce sont des nuances de gris (checkerboard typique)
         is_gray1 = abs(r1 - g1) < 10 and abs(g1 - b1) < 10
         is_gray2 = abs(r2 - g2) < 10 and abs(g2 - b2) < 10
         
-        if is_gray1 and is_gray2:
+        # Vérifie aussi que les couleurs sont très différentes (typique d'un checkerboard)
+        color_diff = abs(r1 - r2) + abs(g1 - g2) + abs(b1 - b2)
+        
+        # Vérifie qu'il y a vraiment un pattern alterné (checkerboard)
+        # Échantillonne quelques pixels pour vérifier l'alternance
+        has_checkerboard_pattern = False
+        if is_gray1 and is_gray2 and color_diff > 100:  # Couleurs très différentes
+            # Vérifie l'alternance sur le bord supérieur
+            pattern_found = 0
+            sample_count = min(20, width)
+            for x in range(sample_count):
+                pixel = img.getpixel((x, 0))
+                expected_color = unique_colors[0] if (x // 8) % 2 == 0 else unique_colors[1]  # Pattern 8x8 typique
+                # Vérifie si le pixel correspond à la couleur attendue
+                dist1 = abs(pixel[0] - expected_color[0]) + abs(pixel[1] - expected_color[1]) + abs(pixel[2] - expected_color[2])
+                dist2 = abs(pixel[0] - unique_colors[0][0]) + abs(pixel[1] - unique_colors[0][1]) + abs(pixel[2] - unique_colors[0][2])
+                dist3 = abs(pixel[0] - unique_colors[1][0]) + abs(pixel[1] - unique_colors[1][1]) + abs(pixel[2] - unique_colors[1][2])
+                if min(dist2, dist3) < 30:  # Le pixel correspond à une des 2 couleurs
+                    pattern_found += 1
+            
+            # Si au moins 70% des pixels correspondent au pattern, c'est probablement un checkerboard
+            if pattern_found / sample_count > 0.7:
+                has_checkerboard_pattern = True
+        
+        if has_checkerboard_pattern:
             print(f"🔍 Fond quadrillé détecté: {unique_colors[0]} et {unique_colors[1]}")
             return unique_colors  # Retourne les 2 couleurs
     
     # Sinon, prend la couleur la plus fréquente
     most_common = max(set(colors), key=colors.count)
+    
+    # Si la couleur dominante est très claire (blanc ou presque blanc), 
+    # on ne cherche pas de checkerboard pour éviter les faux positifs
+    r, g, b = most_common
+    is_very_light = (r + g + b) > 700  # Très clair (sur 765 max)
+    
+    # Si c'est très clair, on désactive la détection de checkerboard même si activée
+    if is_very_light and detect_checkerboard and len(unique_colors) == 2:
+        print(f"🔍 Couleur de fond très claire détectée: RGB{most_common}")
+        print(f"   (Détection de checkerboard ignorée pour éviter les faux positifs)")
+        return [most_common]
+    
     print(f"🔍 Couleur de fond détectée: RGB{most_common}")
     return [most_common]
 
+def is_color_match(pixel, bg_color, tolerance):
+    """Vérifie si un pixel correspond à une couleur de fond avec tolérance"""
+    r, g, b = pixel[:3]  # Prend seulement RGB
+    br, bg_val, bb = bg_color
+    color_distance = abs(r - br) + abs(g - bg_val) + abs(b - bb)
+    return color_distance < tolerance
+
 def remove_background(image_path, bg_colors, tolerance=30):
     """
-    Supprime le fond de l'image en rendant transparent
+    Supprime le fond de l'image en rendant transparent uniquement les zones
+    connectées aux bords (pas les zones intérieures du sprite)
     bg_colors: liste de couleurs à rendre transparentes
     """
     img = Image.open(image_path).convert('RGBA')
-    data = img.getdata()
+    width, height = img.size
     
+    # Crée un masque pour marquer les pixels de fond connectés aux bords
+    # 0 = à rendre transparent, 1 = à garder
+    mask = [[1] * width for _ in range(height)]
+    
+    # Marque les pixels de fond sur les bords et utilise flood fill avec queue
+    queue = deque()
+    
+    # Vérifie tous les bords et ajoute les pixels de fond à la queue
+    for y in range(height):
+        for x in range(width):
+            # Si c'est sur un bord
+            if x == 0 or x == width - 1 or y == 0 or y == height - 1:
+                pixel = img.getpixel((x, y))
+                # Vérifie si c'est une couleur de fond
+                for bg_color in bg_colors:
+                    if is_color_match(pixel, bg_color, tolerance):
+                        mask[y][x] = 0  # Marque comme fond
+                        queue.append((x, y))
+                        break
+    
+    # Flood fill depuis les bords pour trouver tous les pixels de fond connectés
+    # Utilise une queue pour une efficacité optimale
+    while queue:
+        x, y = queue.popleft()
+        
+        # Vérifie les 4 voisins (filtre les None)
+        neighbors = []
+        if x > 0:
+            neighbors.append((x-1, y))
+        if x < width-1:
+            neighbors.append((x+1, y))
+        if y > 0:
+            neighbors.append((x, y-1))
+        if y < height-1:
+            neighbors.append((x, y+1))
+        
+        for nx, ny in neighbors:
+            if mask[ny][nx] == 1:
+                # Vérifie si ce voisin est aussi une couleur de fond
+                pixel = img.getpixel((nx, ny))
+                for bg_color in bg_colors:
+                    if is_color_match(pixel, bg_color, tolerance):
+                        mask[ny][nx] = 0  # Marque comme fond
+                        queue.append((nx, ny))
+                        break
+    
+    # Applique le masque : rend transparent uniquement les pixels marqués comme fond
     new_data = []
     pixels_made_transparent = 0
     
-    for pixel in data:
-        r, g, b, a = pixel
-        
-        # Vérifie si le pixel correspond à une des couleurs de fond
-        is_background = False
-        for bg_color in bg_colors:
-            br, bg_val, bb = bg_color
-            
-            # Calcule la distance de couleur
-            color_distance = abs(r - br) + abs(g - bg_val) + abs(b - bb)
-            
-            if color_distance < tolerance:
-                is_background = True
+    for y in range(height):
+        for x in range(width):
+            pixel = img.getpixel((x, y))
+            if mask[y][x] == 0:
+                # Rendre transparent
+                new_data.append((pixel[0], pixel[1], pixel[2], 0))
                 pixels_made_transparent += 1
-                break
-        
-        if is_background:
-            new_data.append((r, g, b, 0))  # Transparent
-        else:
-            new_data.append(pixel)
+            else:
+                # Garder le pixel tel quel
+                new_data.append(pixel)
     
     img.putdata(new_data)
     
@@ -189,8 +285,13 @@ def load_config(config_path):
         print(f"❌ Erreur de parsing JSON dans {config_path}: {e}")
         sys.exit(1)
 
-def create_sprite_sheet(frames, output_path, target_height, transparent, tolerance, line=None, target_width=None):
-    """Crée la sprite sheet à partir des frames, avec support multilignes"""
+def create_sprite_sheet(frames, output_path, target_height, transparent, tolerance, target_width=None):
+    """
+    Crée la sprite sheet à partir des frames
+    Divise automatiquement en plusieurs lignes si la largeur dépasse 4096px (limite React Native)
+    """
+    MAX_WIDTH = 4096  # Limite React Native
+    
     print(f"\n🎨 Création de la sprite sheet...")
     
     if not frames:
@@ -200,7 +301,9 @@ def create_sprite_sheet(frames, output_path, target_height, transparent, toleran
     # Détecte la couleur de fond sur la première frame
     bg_colors = None
     if transparent:
-        bg_colors = detect_background_color(frames[0])
+        # Désactive la détection de checkerboard par défaut pour éviter les faux positifs
+        # (peut être réactivée si nécessaire)
+        bg_colors = detect_background_color(frames[0], detect_checkerboard=False)
     
     # Traite chaque frame
     processed_frames = []
@@ -226,86 +329,71 @@ def create_sprite_sheet(frames, output_path, target_height, transparent, toleran
         avg_transparent = total_transparent_pixels // len(frames)
         print(f"✅ Transparence appliquée (~{avg_transparent} pixels/frame)")
     
-    # Calcule les dimensions de la nouvelle ligne de sprite
+    # Calcule les dimensions d'une frame
     frame_width = processed_frames[0].width
     frame_height = processed_frames[0].height
-    new_line_width = frame_width * len(processed_frames)
-    new_line_height = frame_height
     
-    if target_width:
-        print(f"📐 Dimensions nouvelle ligne: {len(processed_frames)} frames de {frame_width}x{frame_height}px (largeur fixe)")
-    else:
-        print(f"📐 Dimensions nouvelle ligne: {len(processed_frames)} frames de {frame_width}x{frame_height}px")
-    print(f"📐 Largeur ligne: {new_line_width}px")
+    # Calcule la largeur totale nécessaire
+    total_width = frame_width * len(processed_frames)
     
-    # Gestion du mode multilignes
-    if line is not None:
-        # Calcule la position Y de la ligne (0-indexed)
-        y_position = line * target_height
+    # Si la largeur totale est <= 4096px, une seule ligne suffit
+    if total_width <= MAX_WIDTH:
+        # Une seule ligne avec la largeur exacte
+        num_lines = 1
+        actual_width = total_width
+        frames_per_line = len(processed_frames)
         
-        # Vérifie si le fichier existe
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            print(f"📂 Fichier existant détecté: {output_path}")
-            existing_sheet = Image.open(output_path).convert('RGBA')
-            existing_width, existing_height = existing_sheet.size
-            
-            # Calcule la largeur maximale
-            final_width = max(existing_width, new_line_width)
-            
-            # Vérifie si on a besoin d'ajouter des lignes
-            required_height = y_position + target_height
-            if existing_height < required_height:
-                print(f"📏 Extension du fichier: {existing_height}px → {required_height}px")
-                # Crée une nouvelle image avec la bonne hauteur
-                extended_sheet = Image.new('RGBA', (final_width, required_height), (0, 0, 0, 0))
-                # Copie l'image existante
-                extended_sheet.paste(existing_sheet, (0, 0))
-                existing_sheet = extended_sheet
-            else:
-                # Utilise l'image existante, mais peut-être besoin d'étendre la largeur
-                if existing_width < new_line_width:
-                    print(f"📏 Extension de la largeur: {existing_width}px → {final_width}px")
-                    extended_sheet = Image.new('RGBA', (final_width, existing_height), (0, 0, 0, 0))
-                    extended_sheet.paste(existing_sheet, (0, 0))
-                    existing_sheet = extended_sheet
-                else:
-                    final_width = existing_width
-            
-            sprite_sheet = existing_sheet
-            print(f"📐 Dimensions finales: {final_width}x{sprite_sheet.height}px")
-            print(f"📍 Insertion à la ligne {line} (y={y_position}px)")
-        else:
-            # Fichier n'existe pas ou est vide, on crée un nouveau
-            print(f"📄 Création d'un nouveau fichier")
-            required_height = y_position + target_height
-            sprite_sheet = Image.new('RGBA', (new_line_width, required_height), (0, 0, 0, 0))
-            final_width = new_line_width
-            print(f"📐 Dimensions finales: {final_width}x{required_height}px")
-            print(f"📍 Insertion à la ligne {line} (y={y_position}px)")
-        
-        # Colle la nouvelle ligne de sprite à la position Y
-        new_line_sprite = Image.new('RGBA', (new_line_width, new_line_height), (0, 0, 0, 0))
-        for i, frame in enumerate(processed_frames):
-            x_offset = i * frame_width
-            new_line_sprite.paste(frame, (x_offset, 0))
-        
-        sprite_sheet.paste(new_line_sprite, (0, y_position))
-        
-    else:
-        # Mode normal (une seule ligne)
-        sprite_width = new_line_width
-        sprite_height = new_line_height
-        
-        print(f"📐 Sprite sheet finale: {sprite_width}x{sprite_height}px")
+        print(f"📐 Dimensions frame: {frame_width}x{frame_height}px")
+        print(f"📐 Total frames: {len(processed_frames)}")
+        print(f"📐 Largeur totale: {total_width}px (≤ {MAX_WIDTH}px, une seule ligne)")
         
         # Crée la sprite sheet
-        sprite_sheet = Image.new('RGBA', (sprite_width, sprite_height), (0, 0, 0, 0))
+        sprite_sheet = Image.new('RGBA', (actual_width, frame_height), (0, 0, 0, 0))
         
+        # Place toutes les frames sur une ligne
         for i, frame in enumerate(processed_frames):
             x_offset = i * frame_width
             sprite_sheet.paste(frame, (x_offset, 0))
         
-        final_width = sprite_width
+        print(f"📐 Sprite sheet finale: {actual_width}x{frame_height}px (1 ligne)")
+    else:
+        # Plusieurs lignes nécessaires
+        # Calcule combien de frames peuvent tenir sur une ligne (max 4096px)
+        frames_per_line = MAX_WIDTH // frame_width
+        if frames_per_line == 0:
+            frames_per_line = 1  # Au moins une frame par ligne
+        
+        # Calcule le nombre de lignes nécessaires
+        num_lines = (len(processed_frames) + frames_per_line - 1) // frames_per_line  # Arrondi supérieur
+        
+        # Toutes les lignes ont la même largeur = largeur d'une ligne pleine
+        actual_width = frames_per_line * frame_width
+        
+        print(f"📐 Dimensions frame: {frame_width}x{frame_height}px")
+        print(f"📐 Total frames: {len(processed_frames)}")
+        print(f"📐 Largeur totale: {total_width}px (> {MAX_WIDTH}px, division en {num_lines} ligne(s))")
+        print(f"📐 Frames par ligne: {frames_per_line} (limite: {MAX_WIDTH}px)")
+        print(f"📐 Largeur de chaque ligne: {actual_width}px (identique pour toutes)")
+        
+        # Crée la sprite sheet
+        sprite_height = frame_height * num_lines
+        sprite_sheet = Image.new('RGBA', (actual_width, sprite_height), (0, 0, 0, 0))
+        
+        # Place les frames ligne par ligne
+        frame_index = 0
+        for line in range(num_lines):
+            y_offset = line * frame_height
+            frames_in_this_line = min(frames_per_line, len(processed_frames) - frame_index)
+            
+            for i in range(frames_in_this_line):
+                x_offset = i * frame_width
+                sprite_sheet.paste(processed_frames[frame_index], (x_offset, y_offset))
+                frame_index += 1
+            
+            # Les lignes incomplètes auront automatiquement du transparent à droite
+            # (créé par Image.new avec fond transparent)
+        
+        print(f"📐 Sprite sheet finale: {actual_width}x{sprite_height}px ({num_lines} ligne(s))")
     
     # Sauvegarde
     sprite_sheet.save(output_path, 'PNG', optimize=True)
@@ -324,9 +412,8 @@ Exemples:
   %(prog)s video.mp4 --size=256 --transparent --start=0 --end=2
   %(prog)s video.mp4 --size=128 --fps=15 --output=avatar-celebrate.png
   %(prog)s video.mp4 --transparent --tolerance=50 --start=1.5 --end=3
-  %(prog)s video.mp4 --size=300 --transparent --start=0 --end=1 --output=avatar.png --line=3
   %(prog)s video.mp4 --size=128 --width=128 --transparent --fps=12
-  %(prog)s video.mp4 --config=config.json --output=avatar.png --line=2
+  %(prog)s video.mp4 --config=config.json --output=avatar.png
 
 Fichier de configuration (config.json):
   {
@@ -356,8 +443,6 @@ Fichier de configuration (config.json):
                        help='Images par seconde à extraire (défaut: 10)')
     parser.add_argument('--output', '-o', 
                        help='Nom du fichier de sortie (défaut: input-sprite.png)')
-    parser.add_argument('--line', type=int, default=None,
-                       help='Numéro de ligne (0-indexed) où placer l\'animation dans un spritesheet multilignes')
     parser.add_argument('--width', type=int, default=None,
                        help='Largeur fixe en pixels pour toutes les frames (force crop/pad si nécessaire)')
     parser.add_argument('--config', '-c', type=str, default=None,
@@ -439,8 +524,6 @@ Fichier de configuration (config.json):
     print(f"👻 Transparence: {'✅ Activée' if args.transparent else '❌ Désactivée'}")
     if args.transparent:
         print(f"🎯 Tolérance: {args.tolerance}")
-    if args.line is not None:
-        print(f"📍 Ligne: {args.line} (y={args.line * args.size}px)")
     print("=" * 60)
     print()
     
@@ -458,7 +541,6 @@ Fichier de configuration (config.json):
             args.size, 
             args.transparent,
             args.tolerance,
-            args.line,
             args.width
         )
         

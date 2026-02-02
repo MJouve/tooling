@@ -3,7 +3,8 @@
 Outil de redimensionnement d'images
 ====================================
 Redimensionne toutes les images d'un dossier pour qu'elles aient les mêmes dimensions.
-Les images sont étirées (pas de padding) pour correspondre aux dimensions cibles.
+Par défaut, les images sont étirées pour correspondre aux dimensions cibles.
+Avec l'option --padding, les images conservent leur ratio d'aspect avec du padding transparent.
 """
 
 import os
@@ -81,31 +82,76 @@ def get_target_size_for_image(image_size, target_width=None, target_height=None,
             return (original_width, original_height)
 
 
-def resize_image(image_path, target_size, output_path):
+def resize_image(image_path, target_size, output_path, use_padding=False):
     """
-    Redimensionne une image en l'étirant aux dimensions cibles.
+    Redimensionne une image aux dimensions cibles.
     
     Args:
         image_path: Chemin de l'image source
         target_size: Tuple (width, height) pour la taille cible
         output_path: Chemin de l'image de sortie
+        use_padding: Si True, conserve le ratio d'aspect avec padding transparent (défaut: False)
         
     Returns:
         True si succès, False sinon
     """
     try:
         img = Image.open(image_path)
+        target_width, target_height = target_size
+        original_width, original_height = img.size
         
-        # Redimensionne en étirant (pas de padding)
-        resized_img = img.resize(target_size, Image.LANCZOS)
+        if use_padding:
+            # Mode padding : on garde l'image à sa taille originale et on ajoute du padding transparent
+            # Vérifie que l'image originale rentre dans les dimensions cibles
+            if original_width > target_width or original_height > target_height:
+                print(f"   ⚠️  Image {image_path.name} ({original_width}x{original_height}) plus grande que la cible ({target_width}x{target_height}), elle sera rognée")
+            
+            # Convertit l'image en RGBA si nécessaire pour gérer la transparence
+            if img.mode == 'P':
+                # Mode palette : convertit en RGBA pour préserver la transparence
+                img = img.convert('RGBA')
+            elif img.mode not in ('RGBA', 'LA'):
+                # Convertit en RGBA pour avoir un fond transparent
+                img = img.convert('RGBA')
+            elif img.mode == 'LA':
+                # Mode LA (Luminance + Alpha) : convertit en RGBA
+                img = img.convert('RGBA')
+            
+            # Crée un canvas transparent de la taille cible exacte
+            canvas = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+            
+            # Calcule les offsets pour centrer l'image (padding équilibré)
+            x_offset = (target_width - original_width) // 2
+            y_offset = (target_height - original_height) // 2
+            
+            # Colle l'image originale (sans redimensionnement) au centre du canvas
+            if img.mode == 'RGBA':
+                canvas.paste(img, (x_offset, y_offset), img)
+            else:
+                canvas.paste(img, (x_offset, y_offset))
+            
+            resized_img = canvas
+            
+            # Vérification : le canvas final doit avoir exactement la taille cible
+            assert resized_img.size == (target_width, target_height), \
+                f"Taille du canvas incorrecte: {resized_img.size} au lieu de {(target_width, target_height)}"
+        else:
+            # Redimensionne en étirant (pas de padding)
+            resized_img = img.resize(target_size, Image.LANCZOS)
         
         # Sauvegarde en préservant le format original si possible
         # Convertit en RGB pour les formats qui ne supportent pas RGBA
         if resized_img.mode == 'RGBA' and image_path.suffix.lower() in {'.jpg', '.jpeg'}:
-            # JPG ne supporte pas la transparence
+            # JPG ne supporte pas la transparence : on utilise un fond blanc
+            # IMPORTANT: préserver la taille exacte lors de la conversion
             background = Image.new('RGB', resized_img.size, (255, 255, 255))
             background.paste(resized_img, mask=resized_img.split()[3] if resized_img.mode == 'RGBA' else None)
             resized_img = background
+        
+        # Vérification finale : l'image doit avoir la taille cible
+        if use_padding:
+            assert resized_img.size == (target_width, target_height), \
+                f"Taille finale incorrecte: {resized_img.size} au lieu de {(target_width, target_height)}"
         
         resized_img.save(output_path, quality=95, optimize=True)
         return True
@@ -139,7 +185,7 @@ def ask_confirmation(directory, num_images, target_info):
     return response in ['o', 'oui', 'y', 'yes']
 
 
-def resize_images(directory, output_subdir='resized', target_width=None, target_height=None, confirm=True):
+def resize_images(directory, output_subdir='resized', target_width=None, target_height=None, confirm=True, use_padding=False):
     """
     Redimensionne toutes les images d'un dossier.
     
@@ -149,23 +195,25 @@ def resize_images(directory, output_subdir='resized', target_width=None, target_
         target_width: Largeur cible (optionnel)
         target_height: Hauteur cible (optionnel)
         confirm: Demander confirmation avant de traiter (défaut: True)
+        use_padding: Utiliser le padding transparent au lieu d'étirer (défaut: False)
     """
     # Récupère les fichiers images
     image_files = get_image_files(directory)
     
     # Obtient la taille de référence (première image) si aucune dimension n'est spécifiée
     reference_size = None
+    mode_text = "avec padding transparent" if use_padding else "étirement"
     if target_width is None and target_height is None:
         first_image = Image.open(image_files[0])
         reference_size = first_image.size
         first_image.close()
-        target_info = f"Taille cible: {reference_size[0]}x{reference_size[1]}px (basée sur la première image)"
+        target_info = f"Taille cible: {reference_size[0]}x{reference_size[1]}px (basée sur la première image, mode: {mode_text})"
     elif target_width is not None and target_height is not None:
-        target_info = f"Taille cible: {target_width}x{target_height}px (dimensions spécifiées)"
+        target_info = f"Taille cible: {target_width}x{target_height}px (dimensions spécifiées, mode: {mode_text})"
     elif target_width is not None:
-        target_info = f"Largeur cible: {target_width}px (hauteur originale conservée pour chaque image)"
+        target_info = f"Largeur cible: {target_width}px (hauteur originale conservée pour chaque image, mode: {mode_text})"
     else:
-        target_info = f"Hauteur cible: {target_height}px (largeur originale conservée pour chaque image)"
+        target_info = f"Hauteur cible: {target_height}px (largeur originale conservée pour chaque image, mode: {mode_text})"
     
     # Obtient la taille de référence (première image) si aucune dimension n'est spécifiée
     reference_size = None
@@ -220,7 +268,7 @@ def resize_images(directory, output_subdir='resized', target_width=None, target_
         output_path = output_dir / image_path.name
         
         # Redimensionne
-        if resize_image(image_path, target_size, output_path):
+        if resize_image(image_path, target_size, output_path, use_padding=use_padding):
             print(f"✅ {original_size[0]}x{original_size[1]} → {target_size[0]}x{target_size[1]}")
             success_count += 1
         else:
@@ -249,6 +297,8 @@ Exemples:
   %(prog)s ./images/ --width 800              # Largeur 800px, hauteur originale conservée
   %(prog)s ./images/ --height 600             # Hauteur 600px, largeur originale conservée
   %(prog)s ./images/ --width 800 --height 600 # Dimensions exactes 800x600px
+  %(prog)s ./images/ --padding                # Mode padding transparent (ratio conservé)
+  %(prog)s ./images/ -w 800 -h 600 --padding  # 800x600px avec padding transparent
   %(prog)s ./images/ -o resized_images        # Dossier de sortie personnalisé
   %(prog)s ./images/ --no-confirm             # Pas de confirmation
         """
@@ -287,6 +337,12 @@ Exemples:
         help='Nom du sous-dossier de sortie (défaut: resized)'
     )
     
+    parser.add_argument(
+        '--padding',
+        action='store_true',
+        help='Conserve le ratio d\'aspect avec padding transparent au lieu d\'étirer les images'
+    )
+    
     args = parser.parse_args()
     
     # Valide les arguments
@@ -308,7 +364,8 @@ Exemples:
             args.output,
             args.width,
             args.height,
-            confirm=not args.no_confirm
+            confirm=not args.no_confirm,
+            use_padding=args.padding
         )
     except KeyboardInterrupt:
         print("\n\n⚠️  Interrompu par l'utilisateur")

@@ -14,15 +14,15 @@ from pathlib import Path
 # CONFIGURATION : Liste des fichiers requis (émotions/actions)
 # ============================================================================
 # Modifiez cette liste selon vos besoins
-# Format: (nom_fichier_sans_extension, numéro_ligne, description)
+# Format: (nom_fichier_sans_extension, description)
 REQUIRED_FILES = [
-    ("joyeux", 0, "Animation joyeuse"),
-    ("triste", 1, "Animation triste"),
-    ("neutre", 2, "Animation neutre"),
-    ("fatigue", 3, "Animation fatigue"),
+    ("joyeux", "Animation joyeuse"),
+    ("triste", "Animation triste"),
+    ("neutre", "Animation neutre"),
+    ("fatigue", "Animation fatigue"),
     # Ajoutez d'autres animations ici :
-    # ("action1", 4, "Description action1"),
-    # ("action2", 5, "Description action2"),
+    # ("action1", "Description action1"),
+    # ("action2", "Description action2"),
 ]
 
 # Configuration par défaut pour la génération
@@ -49,7 +49,7 @@ def check_required_files(source_dir):
     found = []
     missing = []
     
-    for file_name, line_num, description in REQUIRED_FILES:
+    for file_name, description in REQUIRED_FILES:
         # Cherche le fichier avec différentes extensions possibles
         possible_extensions = ['.mp4', '.MP4', '.mov', '.MOV']
         file_found = None
@@ -61,9 +61,9 @@ def check_required_files(source_dir):
                 break
         
         if file_found:
-            found.append((file_name, line_num, description, file_found))
+            found.append((file_name, description, file_found))
         else:
-            missing.append((file_name, line_num, description))
+            missing.append((file_name, description))
     
     return found, missing
 
@@ -76,16 +76,16 @@ def display_status(found, missing):
     
     if found:
         print(f"✅ Fichiers trouvés ({len(found)}/{len(REQUIRED_FILES)}):")
-        for file_name, line_num, description, file_path in found:
+        for file_name, description, file_path in found:
             file_size = file_path.stat().st_size / (1024 * 1024)  # MB
-            print(f"   ✓ {file_name:15} → Ligne {line_num:2} | {description:30} | {file_size:.2f} MB")
+            print(f"   ✓ {file_name:15} | {description:30} | {file_size:.2f} MB")
         print()
     
     if missing:
         print(f"❌ Fichiers manquants ({len(missing)}/{len(REQUIRED_FILES)}):")
         print()
-        for file_name, line_num, description in missing:
-            print(f"   ✗ {file_name:15} → Ligne {line_num:2} | {description}")
+        for file_name, description in missing:
+            print(f"   ✗ {file_name:15} | {description}")
             # Affiche les extensions possibles
             print(f"      Cherché: {file_name}.mp4, {file_name}.MP4, {file_name}.mov, {file_name}.MOV")
         print()
@@ -93,15 +93,15 @@ def display_status(found, missing):
         print("⚠️  ALERTE : CERTAINS FICHIERS SONT MANQUANTS !")
         print("⚠️" * 35)
         print()
-        print("   Le spritesheet sera généré avec les fichiers disponibles uniquement.")
-        print("   Les lignes manquantes seront laissées vides dans le spritesheet.")
+        print("   Les spritesheets seront générés uniquement pour les fichiers disponibles.")
         print()
     
     return len(missing) == 0
 
-def generate_spritesheet(source_dir, output_file, config_file=None):
+def generate_spritesheets(source_dir, output_dir, config_file=None):
     """
-    Génère le spritesheet multilignes en appelant mp4-to-sprite.py pour chaque fichier
+    Génère un spritesheet par animation en appelant mp4-to-sprite.py pour chaque fichier
+    Chaque animation génère son propre fichier avec division automatique si > 4096px
     """
     found, missing = check_required_files(source_dir)
     
@@ -119,10 +119,10 @@ def generate_spritesheet(source_dir, output_file, config_file=None):
             sys.exit(1)
     
     print("=" * 70)
-    print("🎬 GÉNÉRATION DU SPRITESHEET MULTILIGNES")
+    print("🎬 GÉNÉRATION DES SPRITESHEETS")
     print("=" * 70)
     print(f"📁 Dossier source: {source_dir}")
-    print(f"📁 Fichier de sortie: {output_file}")
+    print(f"📁 Dossier de sortie: {output_dir}")
     print()
     
     # Vérifie que mp4-to-sprite.py existe
@@ -141,15 +141,20 @@ def generate_spritesheet(source_dir, output_file, config_file=None):
     if config_file:
         base_cmd.extend(["--config", config_file])
     
-    # Génère chaque ligne du spritesheet
+    # Crée le dossier de sortie s'il n'existe pas
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Génère un spritesheet par animation
     success_count = 0
     fail_count = 0
     
-    print(f"🔄 Génération de {len(found)} ligne(s)...")
+    print(f"🔄 Génération de {len(found)} spritesheet(s)...")
     print()
     
-    for file_name, line_num, description, file_path in found:
-        print(f"📹 [{line_num}/{len(found)}] Ligne {line_num}: {file_name} ({description})")
+    for i, (file_name, description, file_path) in enumerate(found, 1):
+        output_file = output_path / f"{file_name}.png"
+        print(f"📹 [{i}/{len(found)}] {file_name} ({description})")
         
         # Construit la commande pour ce fichier
         cmd = base_cmd.copy()
@@ -158,8 +163,7 @@ def generate_spritesheet(source_dir, output_file, config_file=None):
             "--size", str(DEFAULT_CONFIG["size"]),
             "--fps", str(DEFAULT_CONFIG["fps"]),
             "--start", str(DEFAULT_CONFIG["start"]),
-            "--output", output_file,
-            "--line", str(line_num),
+            "--output", str(output_file),
         ])
         
         # Ajoute les options conditionnelles
@@ -181,10 +185,10 @@ def generate_spritesheet(source_dir, output_file, config_file=None):
                 text=True,
                 check=True
             )
-            print(f"      ✅ Ligne {line_num} générée avec succès")
+            print(f"      ✅ {file_name}.png généré avec succès")
             success_count += 1
         except subprocess.CalledProcessError as e:
-            print(f"      ❌ Erreur lors de la génération de la ligne {line_num}")
+            print(f"      ❌ Erreur lors de la génération de {file_name}")
             # Affiche seulement les dernières lignes de l'erreur pour ne pas surcharger
             error_lines = e.stderr.strip().split('\n')
             if len(error_lines) > 5:
@@ -203,24 +207,23 @@ def generate_spritesheet(source_dir, output_file, config_file=None):
     print("=" * 70)
     print("📊 RÉSUMÉ")
     print("=" * 70)
-    print(f"✅ Lignes générées avec succès: {success_count}/{len(found)}")
+    print(f"✅ Spritesheets générés avec succès: {success_count}/{len(found)}")
     if fail_count > 0:
-        print(f"❌ Lignes en erreur: {fail_count}")
+        print(f"❌ Spritesheets en erreur: {fail_count}")
     
-    if success_count > 0 and os.path.exists(output_file):
-        file_size = os.path.getsize(output_file) / (1024 * 1024)  # MB
-        print(f"💾 Fichier généré: {output_file} ({file_size:.2f} MB)")
+    if success_count > 0:
         print()
-        print("💡 Utilisation dans React:")
-        print(f"   const spriteSheet = {{")
-        print(f"     src: '/assets/{Path(output_file).name}',")
-        print(f"     frameHeight: {DEFAULT_CONFIG['size']},")
-        if DEFAULT_CONFIG['width']:
-            print(f"     frameWidth: {DEFAULT_CONFIG['width']},")
-        print(f"     animations: {{")
-        for file_name, line_num, description, _ in found:
-            print(f"       {file_name}: {{ line: {line_num} }},  // {description}")
-        print(f"     }}")
+        print("💡 Utilisation dans React Native:")
+        print(f"   const animations = {{")
+        for file_name, description, _ in found:
+            output_file = output_path / f"{file_name}.png"
+            if output_file.exists():
+                print(f"     {file_name}: {{")
+                print(f"       src: '/assets/{file_name}.png',")
+                print(f"       frameHeight: {DEFAULT_CONFIG['size']},")
+                if DEFAULT_CONFIG['width']:
+                    print(f"       frameWidth: {DEFAULT_CONFIG['width']},")
+                print(f"     }},  // {description}")
         print(f"   }};")
     
     if fail_count > 0:
@@ -228,24 +231,24 @@ def generate_spritesheet(source_dir, output_file, config_file=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Génère un spritesheet multilignes à partir de vidéos MP4',
+        description='Génère un spritesheet par animation à partir de vidéos MP4',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Exemples:
-  %(prog)s ./videos --output=familier.png
-  %(prog)s ./videos --output=familier.png --config=config.json
-  %(prog)s ./videos --output=familier.png --size=256 --width=256
+  %(prog)s ./videos --output-dir=sprites
+  %(prog)s ./videos --output-dir=sprites --config=config.json
+  %(prog)s ./videos --output-dir=sprites --size=256 --width=256
 
 Le script vérifie d'abord que tous les fichiers requis sont présents,
-puis génère un spritesheet multilignes où chaque animation est placée
-sur sa ligne respective (définie dans REQUIRED_FILES).
+puis génère un spritesheet par animation (chaque animation dans son propre fichier).
+Les spritesheets sont automatiquement divisés en plusieurs lignes si > 4096px.
         """
     )
     
     parser.add_argument('source_dir', 
                        help='Dossier contenant les fichiers MP4')
-    parser.add_argument('--output', '-o', required=True,
-                       help='Fichier PNG de sortie (spritesheet multilignes)')
+    parser.add_argument('--output-dir', '-o', required=True,
+                       help='Dossier de sortie pour les spritesheets PNG')
     parser.add_argument('--config', '-c',
                        help='Fichier de configuration JSON (optionnel)')
     parser.add_argument('--size', type=int,
@@ -270,8 +273,8 @@ sur sa ligne respective (définie dans REQUIRED_FILES).
         print(f"❌ Erreur: Le dossier '{args.source_dir}' n'existe pas")
         sys.exit(1)
     
-    # Génère le spritesheet
-    generate_spritesheet(args.source_dir, args.output, args.config)
+    # Génère les spritesheets
+    generate_spritesheets(args.source_dir, args.output_dir, args.config)
 
 if __name__ == '__main__':
     main()
