@@ -98,6 +98,12 @@
       outline: 2px dashed #38bdf8;
       outline-offset: 1px;
     }
+    .box.has-preview {
+      background-color: transparent;
+    }
+    .box.has-preview.selected {
+      background-color: transparent;
+    }
     .resize-handle {
       position: absolute;
       width: 7px;
@@ -178,6 +184,11 @@
       <input id="nameInput" type="text" style="font-size: 12px; padding: 2px 4px; border-radius: 3px; border: 1px solid #4b5563; background:#020617; color:#e5e7eb; width: 160px;" disabled />
     </label>
     <button id="deleteBoxBtn" disabled>Supprimer la boîte</button>
+    <label class="small">
+      Image prévisualisation (stretch) :
+      <input type="file" id="previewImageInput" accept="image/*" disabled />
+    </label>
+    <button id="clearPreviewBtn" type="button" disabled>Retirer l’image</button>
     <span class="small">
       Astuce : bouton P = parent, clic sur le numéro = déplacement / sélection.
     </span>
@@ -204,6 +215,8 @@
     const toggleInfoBtn = document.getElementById('toggleInfoBtn');
     const nameInput = document.getElementById('nameInput');
     const deleteBoxBtn = document.getElementById('deleteBoxBtn');
+    const previewImageInput = document.getElementById('previewImageInput');
+    const clearPreviewBtn = document.getElementById('clearPreviewBtn');
     const boxesList = document.getElementById('boxesList');
     const infoPanel = document.getElementById('infoPanel');
 
@@ -230,6 +243,34 @@
     let resizeDirection = null; // 'n','s','e','w','ne','nw','se','sw'
     let movingChildrenOffsets = null; // [{id, dx, dy}] pour déplacement du parent
     let resizingChildrenRel = null; // [{id, relX, relY, relW, relH}] pour resize du parent
+    /** Nom du dernier JSON importé (sert de nom par défaut à l’export). Effacé au reset (nouvelle image). */
+    let lastImportedJsonFilename = null;
+
+    /** Nom de fichier sûr pour le téléchargement : base seule, extension .json. */
+    function sanitizeDownloadFilename(raw) {
+      let s = (raw || '').trim();
+      if (!s) return null;
+      s = s.replace(/^.*[/\\]/, '');
+      if (!s) return null;
+      if (!/\.json$/i.test(s)) s += '.json';
+      return s;
+    }
+
+    function defaultExportFilename() {
+      const ts = new Date().toISOString().replaceAll(':', '-');
+      return lastImportedJsonFilename || 'boxes-' + ts + '.json';
+    }
+
+    /** Libère l’URL blob d’une image de prévisualisation (non exportée en JSON). */
+    function revokeBoxPreview(box) {
+      if (!box || !box.previewImageUrl) return;
+      if (String(box.previewImageUrl).startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(box.previewImageUrl);
+        } catch (_) {}
+      }
+      delete box.previewImageUrl;
+    }
 
     // Fonction helper pour obtenir les dimensions réelles de l'image affichée
     // (en tenant compte de object-fit: contain)
@@ -305,6 +346,7 @@
     }
 
     function reset() {
+      boxes.forEach(b => revokeBoxPreview(b));
       boxes = [];
       nextId = 1;
       selectedParentId = null;
@@ -315,6 +357,7 @@
       infoVisible = false;
       infoPanel.classList.add('hidden');
       toggleInfoBtn.textContent = 'Afficher les données';
+      lastImportedJsonFilename = null;
       updateSelectionControls();
     }
 
@@ -644,15 +687,22 @@
           nameInput.value = '';
           nameInput.disabled = true;
           deleteBoxBtn.disabled = true;
+          previewImageInput.disabled = true;
+          clearPreviewBtn.disabled = true;
           return;
         }
         nameInput.disabled = false;
         deleteBoxBtn.disabled = false;
+        previewImageInput.disabled = false;
+        clearPreviewBtn.disabled = !box.previewImageUrl;
         nameInput.value = box.name || '';
       } else {
         nameInput.value = '';
         nameInput.disabled = true;
         deleteBoxBtn.disabled = true;
+        previewImageInput.disabled = true;
+        clearPreviewBtn.disabled = true;
+        previewImageInput.value = '';
       }
     }
 
@@ -679,6 +729,20 @@
         el.style.top = top + 'px';
         el.style.width = w + 'px';
         el.style.height = h + 'px';
+
+        if (box.previewImageUrl) {
+          el.classList.add('has-preview');
+          el.style.backgroundImage = 'url(' + JSON.stringify(box.previewImageUrl) + ')';
+          el.style.backgroundSize = '100% 100%';
+          el.style.backgroundRepeat = 'no-repeat';
+          el.style.backgroundPosition = 'center';
+        } else {
+          el.classList.remove('has-preview');
+          el.style.backgroundImage = '';
+          el.style.backgroundSize = '';
+          el.style.backgroundRepeat = '';
+          el.style.backgroundPosition = '';
+        }
 
         const label = document.createElement('div');
         label.className = 'box-label';
@@ -856,6 +920,7 @@
     }
 
     clearBtn.addEventListener('click', () => {
+      boxes.forEach(b => revokeBoxPreview(b));
       boxes = [];
       nextId = 1;
       selectedParentId = null;
@@ -887,9 +952,33 @@
       renderList();
     });
 
+    previewImageInput.addEventListener('change', e => {
+      if (editBoxId == null) return;
+      const box = boxes.find(b => b.id === editBoxId);
+      if (!box) return;
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      revokeBoxPreview(box);
+      box.previewImageUrl = URL.createObjectURL(file);
+      previewImageInput.value = '';
+      refreshOverlay();
+      updateSelectionControls();
+    });
+
+    clearPreviewBtn.addEventListener('click', () => {
+      if (editBoxId == null) return;
+      const box = boxes.find(b => b.id === editBoxId);
+      if (!box) return;
+      revokeBoxPreview(box);
+      refreshOverlay();
+      updateSelectionControls();
+    });
+
     deleteBoxBtn.addEventListener('click', () => {
       if (editBoxId == null) return;
       const idToDelete = editBoxId;
+      const removed = boxes.find(b => b.id === idToDelete);
+      if (removed) revokeBoxPreview(removed);
       // on enlève la boîte sélectionnée
       boxes = boxes.filter(b => b.id !== idToDelete);
       // les enfants de cette boîte perdent leur parent (mais restent dans la liste)
@@ -1012,6 +1101,8 @@
         updateSelectionControls();
         jsonInput.value = ''; // Réinitialiser l'input
 
+        lastImportedJsonFilename = file.name;
+
         alert(`Import réussi : ${boxes.length} boîte(s) chargée(s).`);
       } catch (error) {
         alert('Erreur lors de l\'import du JSON : ' + error.message);
@@ -1057,14 +1148,20 @@
     saveBtn.addEventListener('click', () => {
       if (!boxes.length) return;
 
+      const suggested = defaultExportFilename();
+      const answer = prompt('Nom du fichier pour l’export :', suggested);
+      if (answer === null) return;
+
+      const filename = sanitizeDownloadFilename(answer) || sanitizeDownloadFilename(suggested);
+      if (!filename) return;
+
       const json = JSON.stringify(buildExportData(), null, 2);
 
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const ts = new Date().toISOString().replaceAll(':', '-');
-      a.download = `boxes-${ts}.json`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
