@@ -21,8 +21,9 @@ SPRITE_SCRIPT = ROOT / "mp4-to-sprite.py"
 class Job:
     created_at: float
     dir_path: Path
-    png_path: Path
     json_path: Path
+    png_path: Path | None = None
+    webp_path: Path | None = None
 
 
 app = Flask(__name__)
@@ -148,11 +149,14 @@ def generate() -> Response:
 
     output_dir = _resolve_output_dir(request.form.get("outputDir"))
     output_png_tmp = job_dir / f"{safe_name}.png"
+    output_base_tmp = output_png_tmp.with_suffix("")
 
     cmd: list[str] = [
         sys.executable,
         str(SPRITE_SCRIPT),
         str(input_path),
+        "--name",
+        str(safe_name),
         "--size",
         str(size),
         "--fps",
@@ -188,13 +192,32 @@ def generate() -> Response:
         shutil.rmtree(job_dir, ignore_errors=True)
         return jsonify({"ok": False, "error": combined or "Erreur lors de la génération."}), 400
 
-    output_json_tmp = output_png_tmp.with_suffix(".json")
-    if not output_png_tmp.exists() or not output_json_tmp.exists():
+    output_json_tmp = output_base_tmp.with_suffix(".json")
+    output_webp_tmp = output_base_tmp.with_suffix(".webp")
+
+    # Vérifie les sorties attendues selon le format
+    need_png = out_format in {"png", "both"}
+    need_webp = out_format in {"webp", "both"}
+    if out_format not in {"png", "webp", "both"}:
+        out_format = "png"
+        need_png = True
+        need_webp = False
+
+    if not output_json_tmp.exists():
         shutil.rmtree(job_dir, ignore_errors=True)
-        return jsonify({"ok": False, "error": "Sortie attendue manquante (PNG/JSON)."}), 500
+        return jsonify({"ok": False, "error": "Sortie attendue manquante (JSON)."}), 500
+
+    if need_png and not output_png_tmp.exists():
+        shutil.rmtree(job_dir, ignore_errors=True)
+        return jsonify({"ok": False, "error": "Sortie attendue manquante (PNG)."}), 500
+
+    if need_webp and not output_webp_tmp.exists():
+        shutil.rmtree(job_dir, ignore_errors=True)
+        return jsonify({"ok": False, "error": "Sortie attendue manquante (WebP)."}), 500
 
     # Si un dossier de sortie est fourni, on y écrit directement les fichiers finals.
-    final_png = output_png_tmp
+    final_png: Path | None = output_png_tmp if output_png_tmp.exists() else None
+    final_webp: Path | None = output_webp_tmp if output_webp_tmp.exists() else None
     final_json = output_json_tmp
     final_dir_str = None
     if output_dir is not None:
@@ -204,12 +227,16 @@ def generate() -> Response:
             shutil.rmtree(job_dir, ignore_errors=True)
             return jsonify({"ok": False, "error": f"Impossible de créer le dossier de sortie: {output_dir}\n{e}"}), 400
 
-        final_png = output_dir / f"{safe_name}.png"
         final_json = output_dir / f"{safe_name}.json"
+        final_png = (output_dir / f"{safe_name}.png") if need_png else None
+        final_webp = (output_dir / f"{safe_name}.webp") if need_webp else None
 
         try:
-            shutil.copy2(output_png_tmp, final_png)
             shutil.copy2(output_json_tmp, final_json)
+            if need_png and final_png is not None:
+                shutil.copy2(output_png_tmp, final_png)
+            if need_webp and final_webp is not None:
+                shutil.copy2(output_webp_tmp, final_webp)
         except Exception as e:
             shutil.rmtree(job_dir, ignore_errors=True)
             return jsonify({"ok": False, "error": f"Impossible d’écrire les fichiers dans: {output_dir}\n{e}"}), 400
@@ -225,18 +252,22 @@ def generate() -> Response:
     _jobs[job_id] = Job(
         created_at=time.time(),
         dir_path=job_dir,
-        png_path=final_png,
         json_path=final_json,
+        png_path=final_png,
+        webp_path=final_webp,
     )
+
+    downloads: dict[str, str] = {"json": f"/download/{job_id}/json"}
+    if final_png is not None and final_png.exists():
+        downloads["png"] = f"/download/{job_id}/png"
+    if final_webp is not None and final_webp.exists():
+        downloads["webp"] = f"/download/{job_id}/webp"
 
     return jsonify(
         {
             "ok": True,
             "jobId": job_id,
-            "downloads": {
-                "png": f"/download/{job_id}/png",
-                "json": f"/download/{job_id}/json",
-            },
+            "downloads": downloads,
             "stdout": (proc.stdout or "").strip(),
             "meta": json_data,
             "writtenTo": final_dir_str,
@@ -252,9 +283,15 @@ def download(job_id: str, kind: str):
         return jsonify({"ok": False, "error": "Job expiré ou inconnu."}), 404
 
     if kind == "png":
+        if job.png_path is None or not job.png_path.exists():
+            return jsonify({"ok": False, "error": "PNG indisponible pour ce job."}), 404
         return send_file(job.png_path, as_attachment=True, download_name=job.png_path.name)
     if kind == "json":
         return send_file(job.json_path, as_attachment=True, download_name=job.json_path.name)
+    if kind == "webp":
+        if job.webp_path is None or not job.webp_path.exists():
+            return jsonify({"ok": False, "error": "WebP indisponible pour ce job."}), 404
+        return send_file(job.webp_path, as_attachment=True, download_name=job.webp_path.name)
 
     return jsonify({"ok": False, "error": "Type de fichier invalide."}), 400
 

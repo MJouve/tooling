@@ -1,0 +1,17 @@
+{
+  "src": "/assets/juvenile_getting_asleep.webp",
+  "srcWebp": "/assets/juvenile_getting_asleep.webp",
+  "frameWidth": 207,
+  "frameHeight": 128,
+  "sheetWidth": 3933,
+  "sheetHeight": 384,
+  "animations": {
+    "juvenile_getting_asleep": {
+      "line": 0,
+      "frames": 55,
+      "fps": 10,
+      "start": 0.5,
+      "end": 6.041667
+    }
+  }
+}

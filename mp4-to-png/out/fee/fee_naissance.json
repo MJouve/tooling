@@ -1,0 +1,17 @@
+{
+  "src": "/assets/fee_naissance.webp",
+  "srcWebp": "/assets/fee_naissance.webp",
+  "frameWidth": 231,
+  "frameHeight": 128,
+  "sheetWidth": 3927,
+  "sheetHeight": 512,
+  "animations": {
+    "fee_naissance": {
+      "line": 0,
+      "frames": 55,
+      "fps": 10,
+      "start": 0.5,
+      "end": 6.041667
+    }
+  }
+}

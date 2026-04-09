@@ -313,6 +313,20 @@
 
           <div class="msg" id="status"></div>
           <div style="height:10px"></div>
+          <div class="row wrap" style="justify-content:space-between; gap:10px">
+            <div class="badge">Aperçu animé</div>
+            <div class="row" style="gap:8px">
+              <label for="previewAnim" style="margin:0">Animation</label>
+              <select id="previewAnim" style="padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:rgba(0,0,0,0.25); color:var(--text);">
+                <option value="">-</option>
+              </select>
+              <button class="btn" id="previewPlayBtn" type="button" disabled>Play</button>
+              <button class="btn" id="previewPauseBtn" type="button" disabled>Pause</button>
+            </div>
+          </div>
+          <div style="height:10px"></div>
+          <div id="previewBox" style="width:256px; height:256px; border-radius:12px; border:1px solid rgba(255,255,255,0.10); background:rgba(0,0,0,0.30); background-repeat:no-repeat;"></div>
+          <div style="height:10px"></div>
           <pre id="meta" aria-label="JSON"></pre>
         </div>
       </section>
@@ -336,11 +350,17 @@
       const saveConfigBtn = document.getElementById('saveConfigBtn');
       const loadConfigBtn = document.getElementById('loadConfigBtn');
       const configInput = document.getElementById('configInput');
+      const previewBox = document.getElementById('previewBox');
+      const previewAnim = document.getElementById('previewAnim');
+      const previewPlayBtn = document.getElementById('previewPlayBtn');
+      const previewPauseBtn = document.getElementById('previewPauseBtn');
 
       let currentFile = null;
       let hasFrame = false;
       let crop = null; // {x,y,w,h} normalisé (0..1)
       let drag = null; // {sx,sy,ex,ey} en pixels canvas
+      let previewTimer = null;
+      let previewState = null;
 
       function setStatus(kind, text) {
         statusEl.className = 'msg' + (kind ? (' ' + kind) : '');
@@ -348,11 +368,26 @@
       }
 
       function setDownloads(pngUrl, jsonUrl) {
-        if (!pngUrl || !jsonUrl) {
+        if (!jsonUrl) {
           downloadsEl.textContent = '-';
           return;
         }
-        downloadsEl.innerHTML = `<a href="${pngUrl}" target="_blank" rel="noreferrer">Télécharger PNG</a> · <a href="${jsonUrl}" target="_blank" rel="noreferrer">Télécharger JSON</a>`;
+        const parts = [];
+        if (pngUrl) parts.push(`<a href="${pngUrl}" target="_blank" rel="noreferrer">Télécharger PNG</a>`);
+        parts.push(`<a href="${jsonUrl}" target="_blank" rel="noreferrer">Télécharger JSON</a>`);
+        downloadsEl.innerHTML = parts.join(' · ');
+      }
+
+      function setDownloadsV2(downloads) {
+        if (!downloads || !downloads.json) {
+          downloadsEl.textContent = '-';
+          return;
+        }
+        const parts = [];
+        if (downloads.png) parts.push(`<a href="${downloads.png}" target="_blank" rel="noreferrer">Télécharger PNG</a>`);
+        if (downloads.webp) parts.push(`<a href="${downloads.webp}" target="_blank" rel="noreferrer">Télécharger WebP</a>`);
+        parts.push(`<a href="${downloads.json}" target="_blank" rel="noreferrer">Télécharger JSON</a>`);
+        downloadsEl.innerHTML = parts.join(' · ');
       }
 
       function setFile(file) {
@@ -374,7 +409,99 @@
         drag = null;
         hasFrame = false;
         ctx.clearRect(0, 0, frameCanvas.width, frameCanvas.height);
+        stopPreview();
       }
+
+      function stopPreview() {
+        if (previewTimer) {
+          clearInterval(previewTimer);
+          previewTimer = null;
+        }
+        previewState = null;
+        previewAnim.innerHTML = '<option value="">-</option>';
+        previewPlayBtn.disabled = true;
+        previewPauseBtn.disabled = true;
+        previewBox.style.backgroundImage = '';
+      }
+
+      function startPreview() {
+        if (!previewState) return;
+        if (previewTimer) return;
+        const { meta, spriteUrl, animName } = previewState;
+        const anim = meta.animations?.[animName];
+        if (!anim) return;
+
+        const frameW = meta.frameWidth;
+        const frameH = meta.frameHeight;
+        const sheetW = meta.sheetWidth;
+        const sheetH = meta.sheetHeight;
+        const frames = anim.frames;
+        const fps = anim.fps || 10;
+        const framesPerRow = Math.max(1, Math.floor(sheetW / frameW));
+        const baseLine = (anim.line ?? 0);
+        const isWrapped = framesPerRow < frames; // animation répartie sur plusieurs rangées
+        const isMultilineSheet = !isWrapped; // une animation tient sur une seule rangée (multi-lignes = offset Y)
+
+        previewBox.style.width = `${frameW}px`;
+        previewBox.style.height = `${frameH}px`;
+        previewBox.style.backgroundImage = `url(${spriteUrl})`;
+        previewBox.style.backgroundSize = `${sheetW}px ${sheetH}px`;
+
+        let i = 0;
+        const tick = () => {
+          const fx = i % framesPerRow;
+          const fy = Math.floor(i / framesPerRow);
+          let x = fx * frameW;
+          let y = fy * frameH;
+          // Mode multi-lignes: une animation = une ligne dédiée (offset Y)
+          // IMPORTANT: si l’animation est "wrappée" (framesPerRow < frames), on NE force PAS y=line*H,
+          // sinon on ne verra que la première rangée.
+          if (anim.line != null && isMultilineSheet && sheetH >= (baseLine + 1) * frameH) {
+            y = baseLine * frameH;
+          }
+          previewBox.style.backgroundPosition = `-${x}px -${y}px`;
+          i = (i + 1) % frames;
+        };
+
+        tick();
+        previewTimer = setInterval(tick, Math.max(10, Math.round(1000 / fps)));
+      }
+
+      function setPreview(meta, downloads) {
+        stopPreview();
+        if (!meta || !downloads) return;
+        const spriteUrl = downloads.webp || downloads.png;
+        if (!spriteUrl) return;
+
+        const animNames = meta.animations ? Object.keys(meta.animations) : [];
+        if (animNames.length === 0) return;
+
+        previewAnim.innerHTML = animNames.map(n => `<option value="${n}">${n}</option>`).join('');
+        const animName = animNames[0];
+        previewAnim.value = animName;
+        previewState = { meta, spriteUrl, animName };
+        previewPlayBtn.disabled = false;
+        previewPauseBtn.disabled = false;
+        startPreview();
+      }
+
+      previewAnim.addEventListener('change', () => {
+        if (!previewState) return;
+        previewState.animName = previewAnim.value;
+        stopPreview();
+        // relance preview avec le même meta/asset
+        previewState = { ...previewState, animName: previewAnim.value };
+        previewPlayBtn.disabled = false;
+        previewPauseBtn.disabled = false;
+        startPreview();
+      });
+      previewPlayBtn.addEventListener('click', () => startPreview());
+      previewPauseBtn.addEventListener('click', () => {
+        if (previewTimer) {
+          clearInterval(previewTimer);
+          previewTimer = null;
+        }
+      });
 
       function dragToRect(d) {
         const x1 = Math.max(0, Math.min(frameCanvas.width, d.sx));
@@ -630,8 +757,9 @@
           }
           const where = data.writtenTo ? ` (écrit dans: ${data.writtenTo})` : '';
           setStatus('ok', 'Terminé. Télécharge le PNG + JSON ci-dessous.' + where);
-          setDownloads(data.downloads.png, data.downloads.json);
+          setDownloadsV2(data.downloads);
           metaEl.textContent = data.meta ? JSON.stringify(data.meta, null, 2) : '(JSON indisponible)';
+          if (data.meta) setPreview(data.meta, data.downloads);
         } catch (e) {
           setStatus('err', String(e));
         } finally {

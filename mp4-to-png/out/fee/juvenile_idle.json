@@ -1,0 +1,17 @@
+{
+  "src": "/assets/juvenile_idle.webp",
+  "srcWebp": "/assets/juvenile_idle.webp",
+  "frameWidth": 121,
+  "frameHeight": 128,
+  "sheetWidth": 1210,
+  "sheetHeight": 128,
+  "animations": {
+    "juvenile_idle": {
+      "line": 0,
+      "frames": 10,
+      "fps": 10,
+      "start": 5.0,
+      "end": 6.0
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "src": "/assets/juvenile_walking.webp",
+  "srcWebp": "/assets/juvenile_walking.webp",
+  "frameWidth": 170,
+  "frameHeight": 128,
+  "sheetWidth": 4080,
+  "sheetHeight": 256,
+  "animations": {
+    "juvenile_walking": {
+      "line": 0,
+      "frames": 30,
+      "fps": 10,
+      "start": 2.0,
+      "end": 5.0
+    }
+  }
+}
