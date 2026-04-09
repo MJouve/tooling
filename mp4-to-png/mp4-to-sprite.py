@@ -15,6 +15,141 @@ import shutil
 import json
 from collections import deque
 
+def _save_image(img: Image.Image, path: Path, *, fmt: str, webp_quality: int = 80, webp_lossless: bool = False) -> None:
+    if fmt == "png":
+        img.save(path, "PNG", optimize=True)
+        return
+    if fmt == "webp":
+        img.save(
+            path,
+            "WEBP",
+            quality=int(webp_quality),
+            lossless=bool(webp_lossless),
+            method=6,
+        )
+        return
+    raise ValueError(f"Format de sortie inconnu: {fmt}")
+
+def parse_crop(crop_str: str | None):
+    """
+    Parse un crop "x,y,w,h". Les valeurs peuvent être:
+    - en pixels (entiers) -> ex: "10,20,300,300"
+    - normalisées (floats 0..1) -> ex: "0.1,0.05,0.8,0.9"
+    Retourne un tuple (x, y, w, h) de floats/ints, ou None.
+    """
+    if crop_str is None:
+        return None
+    s = crop_str.strip()
+    if s == "":
+        return None
+    parts = [p.strip() for p in s.split(",")]
+    if len(parts) != 4:
+        raise ValueError("Format attendu: x,y,w,h")
+
+    vals: list[float] = []
+    for p in parts:
+        vals.append(float(p))
+    return tuple(vals)  # type: ignore[return-value]
+
+
+def apply_crop(img: Image.Image, crop_spec):
+    """
+    Applique un crop à une image.
+    - si toutes les valeurs <= 1.0 => interprétation normalisée (ratio)
+    - sinon => interprétation pixels
+    """
+    if crop_spec is None:
+        return img
+
+    x, y, w, h = crop_spec
+    iw, ih = img.size
+
+    is_normalized = max(x, y, w, h) <= 1.0
+    if is_normalized:
+        px = int(round(x * iw))
+        py = int(round(y * ih))
+        pw = int(round(w * iw))
+        ph = int(round(h * ih))
+    else:
+        px = int(round(x))
+        py = int(round(y))
+        pw = int(round(w))
+        ph = int(round(h))
+
+    if pw <= 0 or ph <= 0:
+        raise ValueError("crop invalide: w/h doivent être > 0")
+
+    left = max(0, px)
+    top = max(0, py)
+    right = min(iw, px + pw)
+    bottom = min(ih, py + ph)
+
+    if right <= left or bottom <= top:
+        raise ValueError("crop invalide: rectangle en dehors de l'image")
+
+    return img.crop((left, top, right, bottom))
+
+def write_or_update_spritesheet_json(
+    json_path: Path,
+    *,
+    src: str,
+    src_png: str | None,
+    src_webp: str | None,
+    frame_width: int,
+    frame_height: int,
+    sheet_width: int,
+    sheet_height: int,
+    animation_name: str,
+    line: int,
+    frames: int,
+    fps: int,
+    start: float,
+    end: float,
+):
+    """
+    Écrit (ou met à jour) un JSON décrivant la spritesheet et ses animations.
+    Format stable, lisible par une app React qui n'a qu'à charger ce fichier.
+    """
+    data = {}
+    if json_path.exists():
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            # Si le JSON existe mais est illisible, on repart de zéro
+            data = {}
+
+    data.setdefault("src", src)
+    if src_png is not None:
+        data.setdefault("srcPng", src_png)
+    if src_webp is not None:
+        data.setdefault("srcWebp", src_webp)
+    data.setdefault("frameWidth", frame_width)
+    data.setdefault("frameHeight", frame_height)
+    data.setdefault("sheetWidth", sheet_width)
+    data.setdefault("sheetHeight", sheet_height)
+    data.setdefault("animations", {})
+
+    # Met à jour les dimensions globales si elles évoluent (ex: largeur/hauteur étendue)
+    data["src"] = src
+    if src_png is not None:
+        data["srcPng"] = src_png
+    if src_webp is not None:
+        data["srcWebp"] = src_webp
+    data["frameWidth"] = frame_width
+    data["frameHeight"] = frame_height
+    data["sheetWidth"] = sheet_width
+    data["sheetHeight"] = sheet_height
+
+    data["animations"][animation_name] = {
+        "line": line,
+        "frames": frames,
+        "fps": fps,
+        "start": start,
+        "end": end,
+    }
+
+    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
 def check_dependencies():
     """Vérifie que ffmpeg est installé"""
     try:
@@ -285,6 +420,57 @@ def load_config(config_path):
         print(f"❌ Erreur de parsing JSON dans {config_path}: {e}")
         sys.exit(1)
 
+def process_frames(frames, target_height, transparent, tolerance, target_width=None, crop_spec=None):
+    """Charge, détoure si besoin, redimensionne, retourne la liste des frames PIL prêtes."""
+    if not frames:
+        print("❌ Aucune frame à traiter")
+        sys.exit(1)
+
+    bg_colors = None
+    if transparent:
+        # Désactive la détection de checkerboard par défaut pour éviter les faux positifs
+        bg_colors = detect_background_color(frames[0], detect_checkerboard=False)
+
+    processed_frames = []
+    total_transparent_pixels = 0
+
+    for i, frame_path in enumerate(frames, 1):
+        print(f"   Traitement frame {i}/{len(frames)}...", end='\r')
+        if transparent and bg_colors:
+            img, transparent_pixels = remove_background(frame_path, bg_colors, tolerance)
+            total_transparent_pixels += transparent_pixels
+        else:
+            img = Image.open(frame_path).convert('RGBA')
+
+        if crop_spec is not None:
+            img = apply_crop(img, crop_spec)
+
+        img = resize_image(img, target_height, target_width)
+        processed_frames.append(img)
+
+    print()  # Nouvelle ligne après la progression
+    if transparent:
+        avg_transparent = total_transparent_pixels // len(frames)
+        print(f"✅ Transparence appliquée (~{avg_transparent} pixels/frame)")
+
+    return processed_frames
+
+def create_sprite_row(processed_frames):
+    """Crée une sprite sheet sur une seule ligne (une animation = une ligne)."""
+    if not processed_frames:
+        print("❌ Aucune frame à assembler")
+        sys.exit(1)
+
+    frame_width = processed_frames[0].width
+    frame_height = processed_frames[0].height
+    total_width = frame_width * len(processed_frames)
+
+    sprite_row = Image.new('RGBA', (total_width, frame_height), (0, 0, 0, 0))
+    for i, frame in enumerate(processed_frames):
+        sprite_row.paste(frame, (i * frame_width, 0))
+
+    return sprite_row, len(processed_frames), frame_width, frame_height
+
 def create_sprite_sheet(frames, output_path, target_height, transparent, tolerance, target_width=None):
     """
     Crée la sprite sheet à partir des frames
@@ -294,40 +480,7 @@ def create_sprite_sheet(frames, output_path, target_height, transparent, toleran
     
     print(f"\n🎨 Création de la sprite sheet...")
     
-    if not frames:
-        print("❌ Aucune frame à traiter")
-        sys.exit(1)
-    
-    # Détecte la couleur de fond sur la première frame
-    bg_colors = None
-    if transparent:
-        # Désactive la détection de checkerboard par défaut pour éviter les faux positifs
-        # (peut être réactivée si nécessaire)
-        bg_colors = detect_background_color(frames[0], detect_checkerboard=False)
-    
-    # Traite chaque frame
-    processed_frames = []
-    total_transparent_pixels = 0
-    
-    for i, frame_path in enumerate(frames, 1):
-        print(f"   Traitement frame {i}/{len(frames)}...", end='\r')
-        
-        # Ouvre et traite la frame
-        if transparent and bg_colors:
-            img, transparent_pixels = remove_background(frame_path, bg_colors, tolerance)
-            total_transparent_pixels += transparent_pixels
-        else:
-            img = Image.open(frame_path).convert('RGBA')
-        
-        # Redimensionne
-        img = resize_image(img, target_height, target_width)
-        processed_frames.append(img)
-    
-    print()  # Nouvelle ligne après la progression
-    
-    if transparent:
-        avg_transparent = total_transparent_pixels // len(frames)
-        print(f"✅ Transparence appliquée (~{avg_transparent} pixels/frame)")
+    processed_frames = process_frames(frames, target_height, transparent, tolerance, target_width)
     
     # Calcule les dimensions d'une frame
     frame_width = processed_frames[0].width
@@ -402,6 +555,33 @@ def create_sprite_sheet(frames, output_path, target_height, transparent, toleran
     
     return len(processed_frames), frame_width, frame_height
 
+def write_multiline_spritesheet(output_path: str, line: int, row_img: Image.Image, *, fmt: str, webp_quality: int = 80, webp_lossless: bool = False):
+    """Écrit/étend un PNG existant et colle une animation sur la ligne demandée."""
+    output_file = Path(output_path)
+    row_w, row_h = row_img.size
+    new_width = row_w
+    new_height = (line + 1) * row_h
+
+    base_img = None
+    if output_file.exists():
+        base_img = Image.open(output_file).convert("RGBA")
+        base_w, base_h = base_img.size
+        new_width = max(new_width, base_w)
+        new_height = max(new_height, base_h)
+
+    canvas = Image.new("RGBA", (new_width, new_height), (0, 0, 0, 0))
+    if base_img is not None:
+        canvas.paste(base_img, (0, 0))
+
+    y_offset = line * row_h
+    # Efface la ligne ciblée avant d'écrire (overwrite)
+    clear_row = Image.new("RGBA", (new_width, row_h), (0, 0, 0, 0))
+    canvas.paste(clear_row, (0, y_offset))
+    canvas.paste(row_img, (0, y_offset))
+
+    _save_image(canvas, output_file, fmt=fmt, webp_quality=webp_quality, webp_lossless=webp_lossless)
+    return canvas.size  # (sheet_width, sheet_height)
+
 def main():
     parser = argparse.ArgumentParser(
         description='Convertit une vidéo MP4 en sprite sheet PNG avec transparence',
@@ -413,6 +593,8 @@ Exemples:
   %(prog)s video.mp4 --size=128 --fps=15 --output=avatar-celebrate.png
   %(prog)s video.mp4 --transparent --tolerance=50 --start=1.5 --end=3
   %(prog)s video.mp4 --size=128 --width=128 --transparent --fps=12
+  %(prog)s joyeux.mp4 --size=128 --width=128 --transparent --output=familier.png --line=0
+  %(prog)s triste.mp4 --size=128 --width=128 --transparent --output=familier.png --line=1
   %(prog)s video.mp4 --config=config.json --output=avatar.png
 
 Fichier de configuration (config.json):
@@ -425,6 +607,12 @@ Fichier de configuration (config.json):
     "start": 0,
     "end": 1.5
   }
+
+Notes:
+  - Sans --line: le script WRAP automatiquement si la spritesheet dépasse 4096px de large.
+  - Avec --line: une animation = une ligne, et la largeur d’une ligne DOIT rester ≤ 4096px.
+    Si c’est trop large, réduisez --fps / --end / --size (ou utilisez une animation plus courte).
+  - Crop: utilisez --crop "x,y,w,h" en pixels (ex: "10,20,300,300") ou en ratios (ex: "0.1,0.05,0.8,0.9").
         """
     )
     
@@ -447,6 +635,18 @@ Fichier de configuration (config.json):
                        help='Largeur fixe en pixels pour toutes les frames (force crop/pad si nécessaire)')
     parser.add_argument('--config', '-c', type=str, default=None,
                        help='Fichier de configuration JSON avec les options par défaut')
+    parser.add_argument('--line', type=int, default=None,
+                       help='Mode multi-lignes: place l’animation sur la ligne N (0-indexed). Limite: largeur de ligne ≤ 4096px')
+    parser.add_argument('--name', type=str, default=None,
+                       help='Nom d’animation dans le JSON (défaut: nom du fichier d’entrée sans extension)')
+    parser.add_argument('--crop', type=str, default=None,
+                       help='Crop "x,y,w,h" (pixels ou ratios 0..1) appliqué à chaque frame avant resize')
+    parser.add_argument('--format', choices=['png', 'webp', 'both'], default='png',
+                       help='Format de sortie: png, webp, ou both (défaut: png)')
+    parser.add_argument('--webp-quality', type=int, default=80,
+                       help='Qualité WebP (0-100, défaut: 80). Ignoré si format=png')
+    parser.add_argument('--webp-lossless', action='store_true',
+                       help='WebP lossless (plus lourd, mais fidèle). Ignoré si format=png')
     
     # Parse une première fois pour obtenir --config
     temp_args, _ = parser.parse_known_args()
@@ -474,6 +674,16 @@ Fichier de configuration (config.json):
             parser.set_defaults(output=config['output'])
         if 'line' in config:
             parser.set_defaults(line=config['line'])
+        if 'name' in config:
+            parser.set_defaults(name=config['name'])
+        if 'crop' in config:
+            parser.set_defaults(crop=config['crop'])
+        if 'format' in config:
+            parser.set_defaults(format=config['format'])
+        if 'webpQuality' in config:
+            parser.set_defaults(webp_quality=config['webpQuality'])
+        if 'webpLossless' in config:
+            parser.set_defaults(webp_lossless=config['webpLossless'])
     
     # Parse définitivement (les arguments CLI ont priorité sur la config)
     args = parser.parse_args()
@@ -510,12 +720,37 @@ Fichier de configuration (config.json):
     if args.output is None:
         input_name = Path(args.input).stem
         args.output = f"{input_name}-sprite.png"
+
+    # Normalise le chemin de sortie: on travaille sur une base sans extension
+    out_path = Path(args.output)
+    if out_path.suffix.lower() in {".png", ".webp"}:
+        out_base = out_path.with_suffix("")
+    else:
+        out_base = out_path
+    out_png = out_base.with_suffix(".png")
+    out_webp = out_base.with_suffix(".webp")
+
+    if args.line is not None and args.line < 0:
+        print("❌ Erreur: --line doit être >= 0")
+        sys.exit(1)
+
+    animation_name = args.name or Path(args.input).stem
+    try:
+        crop_spec = parse_crop(args.crop)
+    except ValueError as e:
+        print(f"❌ Erreur: --crop invalide: {e}")
+        sys.exit(1)
     
     print("=" * 60)
     print("🎬 MP4 to Sprite Sheet Converter")
     print("=" * 60)
     print(f"📁 Entrée: {args.input}")
-    print(f"📁 Sortie: {args.output}")
+    if args.format == "png":
+        print(f"📁 Sortie: {out_png}")
+    elif args.format == "webp":
+        print(f"📁 Sortie: {out_webp}")
+    else:
+        print(f"📁 Sorties: {out_png} + {out_webp}")
     print(f"⏱️  Segment: {args.start}s → {args.end}s")
     print(f"📏 Hauteur: {args.size}px")
     if args.width:
@@ -524,6 +759,8 @@ Fichier de configuration (config.json):
     print(f"👻 Transparence: {'✅ Activée' if args.transparent else '❌ Désactivée'}")
     if args.transparent:
         print(f"🎯 Tolérance: {args.tolerance}")
+    if args.line is not None:
+        print(f"📐 Multilignes: ligne {args.line} (animation: {animation_name})")
     print("=" * 60)
     print()
     
@@ -534,15 +771,85 @@ Fichier de configuration (config.json):
         # Extraction des frames
         frames = extract_frames(args.input, args.start, args.end, args.fps, temp_dir)
         
-        # Création de la sprite sheet
-        num_frames, frame_w, frame_h = create_sprite_sheet(
-            frames, 
-            args.output, 
-            args.size, 
-            args.transparent,
-            args.tolerance,
-            args.width
-        )
+        if args.line is None:
+            # Mode normal: sprite sheet (avec wrapping automatique si > 4096px)
+            processed = process_frames(frames, args.size, args.transparent, args.tolerance, args.width, crop_spec=crop_spec)
+            # Recompose via la fonction existante pour le wrapping (sans réécrire toute la logique)
+            # On repasse par create_sprite_sheet en réutilisant les frames originales si pas de crop;
+            # sinon on fait un chemin direct simple: une seule ligne si <=4096, sinon wrapping.
+            if crop_spec is None:
+                num_frames, frame_w, frame_h = create_sprite_sheet(
+                    frames,
+                    str(out_png),
+                    args.size,
+                    args.transparent,
+                    args.tolerance,
+                    args.width,
+                )
+            else:
+                # Recrée le wrapping à partir des frames déjà traitées
+                # (copie de la logique de create_sprite_sheet)
+                MAX_WIDTH = 4096
+                frame_w = processed[0].width
+                frame_h = processed[0].height
+                total_width = frame_w * len(processed)
+                if total_width <= MAX_WIDTH:
+                    sheet = Image.new("RGBA", (total_width, frame_h), (0, 0, 0, 0))
+                    for i, fr in enumerate(processed):
+                        sheet.paste(fr, (i * frame_w, 0))
+                else:
+                    frames_per_line = max(1, MAX_WIDTH // frame_w)
+                    num_lines = (len(processed) + frames_per_line - 1) // frames_per_line
+                    actual_width = frames_per_line * frame_w
+                    sheet_h = num_lines * frame_h
+                    sheet = Image.new("RGBA", (actual_width, sheet_h), (0, 0, 0, 0))
+                    idx = 0
+                    for line in range(num_lines):
+                        y = line * frame_h
+                        n = min(frames_per_line, len(processed) - idx)
+                        for i in range(n):
+                            sheet.paste(processed[idx], (i * frame_w, y))
+                            idx += 1
+                sheet.save(out_png, "PNG", optimize=True)
+                num_frames = len(processed)
+            sheet_img = Image.open(out_png).convert("RGBA")
+            sheet_w, sheet_h = sheet_img.size
+            json_line = 0
+        else:
+            # Mode multilignes: une animation = une ligne, sans wrapping interne
+            if args.width is None:
+                print("❌ Erreur: en mode --line, --width est requis (pour garantir une largeur frame stable).")
+                sys.exit(1)
+
+            processed = process_frames(frames, args.size, args.transparent, args.tolerance, args.width, crop_spec=crop_spec)
+            row_img, num_frames, frame_w, frame_h = create_sprite_row(processed)
+
+            # Garde un format compatible React Native: 4096px max en largeur
+            if row_img.width > 4096:
+                print(f"❌ Erreur: la ligne générée fait {row_img.width}px (> 4096px).")
+                print("   Réduisez --fps, --end, ou la taille des frames (ou utilisez une animation plus courte).")
+                sys.exit(1)
+
+            sheet_w, sheet_h = write_multiline_spritesheet(
+                str(out_png),
+                args.line,
+                row_img,
+                fmt="png",
+                webp_quality=args.webp_quality,
+                webp_lossless=args.webp_lossless,
+            )
+            json_line = args.line
+
+        # Export WebP si demandé (à partir du PNG final en RGBA)
+        if args.format in {"webp", "both"}:
+            img = Image.open(out_png).convert("RGBA")
+            _save_image(img, out_webp, fmt="webp", webp_quality=args.webp_quality, webp_lossless=args.webp_lossless)
+            if args.format == "webp":
+                # Si webp-only, on supprime le png pour éviter la confusion
+                try:
+                    out_png.unlink(missing_ok=True)
+                except Exception:
+                    pass
         
         print()
         print("=" * 60)
@@ -551,15 +858,39 @@ Fichier de configuration (config.json):
         print(f"📊 Résumé:")
         print(f"   • Frames: {num_frames}")
         print(f"   • Taille frame: {frame_w}x{frame_h}px")
-        print(f"   • Fichier: {args.output}")
+        if args.format == "png":
+            print(f"   • Fichier: {out_png}")
+        elif args.format == "webp":
+            print(f"   • Fichier: {out_webp}")
+        else:
+            print(f"   • Fichiers: {out_png} + {out_webp}")
+        print()
+
+        # JSON adjacent (même nom, extension .json)
+        json_path = out_base.with_suffix(".json")
+        src_png = f"/assets/{out_png.name}" if args.format in {"png", "both"} else None
+        src_webp = f"/assets/{out_webp.name}" if args.format in {"webp", "both"} else None
+        preferred_src = src_webp or src_png or f"/assets/{out_png.name}"
+        write_or_update_spritesheet_json(
+            json_path,
+            src=preferred_src,
+            src_png=src_png,
+            src_webp=src_webp,
+            frame_width=frame_w,
+            frame_height=frame_h,
+            sheet_width=sheet_w,
+            sheet_height=sheet_h,
+            animation_name=animation_name,
+            line=json_line,
+            frames=num_frames,
+            fps=args.fps,
+            start=float(args.start),
+            end=float(args.end),
+        )
+        print(f"🧾 JSON généré: {json_path}")
         print()
         print("💡 Utilisation dans React:")
-        print(f"   const config = {{")
-        print(f"     src: '/assets/{Path(args.output).name}',")
-        print(f"     frames: {num_frames},")
-        print(f"     frameWidth: {frame_w},")
-        print(f"     frameHeight: {frame_h}")
-        print(f"   }};")
+        print(f"   // Charge {json_path.name} et utilise config.animations['{animation_name}']")
         
     finally:
         # Nettoie le dossier temporaire

@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>MP4 → SpriteSheet (UI)</title>
+    <style>
+      :root {
+        --bg: #0b0f17;
+        --panel: #111a2b;
+        --text: #e8eefc;
+        --muted: #9fb0d0;
+        --accent: #6ee7ff;
+        --danger: #ff6e88;
+        --ok: #67f5b4;
+        --border: rgba(255,255,255,0.10);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        background: radial-gradient(1200px 800px at 10% 10%, rgba(110,231,255,0.12), transparent 60%),
+                    radial-gradient(900px 700px at 90% 10%, rgba(103,245,180,0.10), transparent 55%),
+                    var(--bg);
+        color: var(--text);
+      }
+      header {
+        padding: 24px 20px 12px;
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      header h1 {
+        margin: 0;
+        font-weight: 800;
+        letter-spacing: 0.2px;
+        font-size: 20px;
+      }
+      header p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        max-width: 78ch;
+        line-height: 1.5;
+        font-size: 14px;
+      }
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 12px 20px 28px;
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 14px;
+      }
+      .card {
+        background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 16px 40px rgba(0,0,0,0.35);
+      }
+      .card .hd {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .card .hd .title {
+        font-weight: 700;
+        font-size: 14px;
+      }
+      .card .bd {
+        padding: 14px;
+      }
+      .grid2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .fieldRow {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        align-items: center;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin: 0 0 6px;
+      }
+      input[type="number"], input[type="text"] {
+        width: 100%;
+        padding: 10px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.14);
+        background: rgba(0,0,0,0.25);
+        color: var(--text);
+        outline: none;
+      }
+      input[type="checkbox"] { transform: translateY(1px); }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .row.wrap {
+        flex-wrap: wrap;
+      }
+      .btn {
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(110,231,255,0.12);
+        color: var(--text);
+        padding: 10px 12px;
+        border-radius: 12px;
+        cursor: pointer;
+        font-weight: 700;
+      }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .btn.primary {
+        background: linear-gradient(135deg, rgba(110,231,255,0.22), rgba(103,245,180,0.18));
+        border-color: rgba(110,231,255,0.28);
+      }
+      .drop {
+        border: 1px dashed rgba(255,255,255,0.22);
+        background: rgba(0,0,0,0.20);
+        border-radius: 14px;
+        padding: 14px;
+      }
+      .drop strong { color: var(--accent); }
+      video {
+        width: 100%;
+        max-height: 380px;
+        background: rgba(0,0,0,0.45);
+        border-radius: 12px;
+      }
+      .canvasWrap {
+        position: relative;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,0.10);
+        background: rgba(0,0,0,0.25);
+      }
+      canvas {
+        width: 100%;
+        display: block;
+        cursor: crosshair;
+      }
+      .badge {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      pre {
+        margin: 0;
+        padding: 12px;
+        border-radius: 12px;
+        background: rgba(0,0,0,0.30);
+        border: 1px solid rgba(255,255,255,0.10);
+        overflow: auto;
+        color: #d8e3ff;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .msg { font-size: 13px; color: var(--muted); }
+      .msg.ok { color: var(--ok); }
+      .msg.err { color: var(--danger); white-space: pre-wrap; }
+      .links a {
+        color: var(--accent);
+        text-decoration: none;
+        font-weight: 700;
+      }
+      .links a:hover { text-decoration: underline; }
+      @media (max-width: 900px) {
+        main { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>MP4 → SpriteSheet (UI)</h1>
+      <p>
+        Charge un MP4, ajuste les paramètres, puis génère une spritesheet PNG + le JSON adjacent
+        (même nom en <code>.json</code>) via <code>mp4-to-sprite.py</code>.
+      </p>
+    </header>
+
+    <main>
+      <section class="card">
+        <div class="hd">
+          <div class="title">Aperçu vidéo</div>
+          <button class="btn" id="pickBtn" type="button">Choisir un MP4</button>
+        </div>
+        <div class="bd">
+          <input id="fileInput" type="file" accept="video/mp4,video/quicktime" hidden />
+          <div class="drop" id="dropZone">
+            <div class="msg" id="fileName">Glisse-dépose un MP4 ici, ou clique “Choisir un MP4”.</div>
+          </div>
+          <div style="height:10px"></div>
+          <video id="video" controls></video>
+          <div style="height:10px"></div>
+          <div class="row" style="justify-content:space-between">
+            <div class="badge">Crop: clique “Capturer frame” puis dessine un rectangle.</div>
+            <div class="row" style="gap:8px">
+              <button class="btn" id="captureBtn" type="button">Capturer frame</button>
+              <button class="btn" id="clearCropBtn" type="button">Effacer crop</button>
+            </div>
+          </div>
+          <div style="height:10px"></div>
+          <div class="canvasWrap">
+            <canvas id="frameCanvas" width="1280" height="720"></canvas>
+          </div>
+          <div style="height:10px"></div>
+          <div class="msg">
+            Astuce: tu peux lire la vidéo ici pour repérer les valeurs <code>start</code> / <code>end</code>.
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="hd">
+          <div class="title">Paramètres</div>
+          <button class="btn primary" id="genBtn" type="button" disabled>Générer</button>
+        </div>
+        <div class="bd">
+          <input id="configInput" type="file" accept="application/json" hidden />
+          <div class="row wrap" style="justify-content:space-between; margin-bottom:10px">
+            <div class="badge">Config: sauvegarder/charger un JSON de paramètres.</div>
+            <div class="row" style="gap:8px">
+              <button class="btn" id="saveConfigBtn" type="button">Sauvegarder config</button>
+              <button class="btn" id="loadConfigBtn" type="button">Charger config…</button>
+            </div>
+          </div>
+
+          <div class="grid2">
+            <div>
+              <label for="outputName">Nom de sortie (sans extension)</label>
+              <input id="outputName" type="text" value="sprite" />
+            </div>
+            <div>
+              <label for="outputDir">Dossier de sortie (optionnel)</label>
+              <div class="fieldRow">
+                <input id="outputDir" type="text" placeholder="ex: ./out (relatif à mp4-to-png/) ou /chemin/absolu" />
+                <button class="btn" id="pickDirBtn" type="button">Choisir…</button>
+              </div>
+            </div>
+            <div>
+              <label for="size">size (hauteur)</label>
+              <input id="size" type="number" value="128" min="1" step="1" />
+            </div>
+            <div>
+              <label for="width">width (optionnel)</label>
+              <input id="width" type="number" placeholder="(vide = auto)" min="1" step="1" />
+            </div>
+            <div>
+              <label for="fps">fps</label>
+              <input id="fps" type="number" value="10" min="1" step="1" />
+            </div>
+            <div>
+              <label for="start">start (s)</label>
+              <input id="start" type="number" value="0" min="0" step="0.01" />
+            </div>
+            <div>
+              <label for="end">end (s) (optionnel)</label>
+              <input id="end" type="number" placeholder="(vide = durée totale)" min="0" step="0.01" />
+            </div>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <div class="row">
+            <input id="transparent" type="checkbox" />
+            <label for="transparent" style="margin:0">transparent (suppression du fond)</label>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <div class="grid2">
+            <div>
+              <label for="tolerance">tolerance</label>
+              <input id="tolerance" type="number" value="30" min="0" max="255" step="1" />
+            </div>
+            <div>
+              <label for="format">Format sortie</label>
+              <select id="format" style="width:100%; padding:10px 10px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:rgba(0,0,0,0.25); color:var(--text);">
+                <option value="png">PNG</option>
+                <option value="webp">WebP</option>
+                <option value="both">PNG + WebP</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <div class="grid2">
+            <div>
+              <label for="webpQuality">WebP quality</label>
+              <input id="webpQuality" type="number" value="80" min="0" max="100" step="1" />
+            </div>
+            <div class="row" style="align-items:flex-end">
+              <input id="webpLossless" type="checkbox" />
+              <label for="webpLossless" style="margin:0">WebP lossless</label>
+            </div>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <div>
+            <label>Sorties</label>
+            <div class="msg links" id="downloads">-</div>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <div class="msg" id="status"></div>
+          <div style="height:10px"></div>
+          <pre id="meta" aria-label="JSON"></pre>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const fileInput = document.getElementById('fileInput');
+      const pickBtn = document.getElementById('pickBtn');
+      const dropZone = document.getElementById('dropZone');
+      const fileName = document.getElementById('fileName');
+      const video = document.getElementById('video');
+      const genBtn = document.getElementById('genBtn');
+      const statusEl = document.getElementById('status');
+      const downloadsEl = document.getElementById('downloads');
+      const metaEl = document.getElementById('meta');
+      const pickDirBtn = document.getElementById('pickDirBtn');
+      const captureBtn = document.getElementById('captureBtn');
+      const clearCropBtn = document.getElementById('clearCropBtn');
+      const frameCanvas = document.getElementById('frameCanvas');
+      const ctx = frameCanvas.getContext('2d');
+      const saveConfigBtn = document.getElementById('saveConfigBtn');
+      const loadConfigBtn = document.getElementById('loadConfigBtn');
+      const configInput = document.getElementById('configInput');
+
+      let currentFile = null;
+      let hasFrame = false;
+      let crop = null; // {x,y,w,h} normalisé (0..1)
+      let drag = null; // {sx,sy,ex,ey} en pixels canvas
+
+      function setStatus(kind, text) {
+        statusEl.className = 'msg' + (kind ? (' ' + kind) : '');
+        statusEl.textContent = text || '';
+      }
+
+      function setDownloads(pngUrl, jsonUrl) {
+        if (!pngUrl || !jsonUrl) {
+          downloadsEl.textContent = '-';
+          return;
+        }
+        downloadsEl.innerHTML = `<a href="${pngUrl}" target="_blank" rel="noreferrer">Télécharger PNG</a> · <a href="${jsonUrl}" target="_blank" rel="noreferrer">Télécharger JSON</a>`;
+      }
+
+      function setFile(file) {
+        currentFile = file;
+        if (!file) {
+          fileName.textContent = 'Glisse-dépose un MP4 ici, ou clique “Choisir un MP4”.';
+          video.removeAttribute('src');
+          genBtn.disabled = true;
+          return;
+        }
+        fileName.innerHTML = `<strong>${file.name}</strong> (${(file.size/1024/1024).toFixed(2)} MB)`;
+        const url = URL.createObjectURL(file);
+        video.src = url;
+        genBtn.disabled = false;
+        setStatus('', '');
+        setDownloads(null, null);
+        metaEl.textContent = '';
+        crop = null;
+        drag = null;
+        hasFrame = false;
+        ctx.clearRect(0, 0, frameCanvas.width, frameCanvas.height);
+      }
+
+      function dragToRect(d) {
+        const x1 = Math.max(0, Math.min(frameCanvas.width, d.sx));
+        const y1 = Math.max(0, Math.min(frameCanvas.height, d.sy));
+        const x2 = Math.max(0, Math.min(frameCanvas.width, d.ex));
+        const y2 = Math.max(0, Math.min(frameCanvas.height, d.ey));
+        const x = Math.min(x1, x2);
+        const y = Math.min(y1, y2);
+        const w = Math.abs(x2 - x1);
+        const h = Math.abs(y2 - y1);
+        if (w < 2 || h < 2) return null;
+        return { x, y, w, h };
+      }
+
+      function setCropFromRect(rect) {
+        crop = {
+          x: rect.x / frameCanvas.width,
+          y: rect.y / frameCanvas.height,
+          w: rect.w / frameCanvas.width,
+          h: rect.h / frameCanvas.height,
+        };
+      }
+
+      function drawOverlay(rect) {
+        if (!hasFrame || !rect) return;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(0, 0, frameCanvas.width, frameCanvas.height);
+        ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
+        ctx.strokeStyle = 'rgba(110,231,255,0.95)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w, rect.h);
+        ctx.restore();
+      }
+
+      function redrawBaseFrame() {
+        if (!hasFrame) return;
+        ctx.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
+      }
+
+      function downloadJson(filename, obj) {
+        const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      function getConfigObject() {
+        const cfg = {
+          size: Number(document.getElementById('size').value || 128),
+          fps: Number(document.getElementById('fps').value || 10),
+          start: Number(document.getElementById('start').value || 0),
+          transparent: document.getElementById('transparent').checked,
+          tolerance: Number(document.getElementById('tolerance').value || 30),
+          format: document.getElementById('format').value,
+          webpQuality: Number(document.getElementById('webpQuality').value || 80),
+          webpLossless: document.getElementById('webpLossless').checked,
+        };
+        const widthVal = document.getElementById('width').value;
+        const endVal = document.getElementById('end').value;
+        if (widthVal !== '') cfg.width = Number(widthVal);
+        if (endVal !== '') cfg.end = Number(endVal);
+        if (crop) cfg.crop = `${crop.x},${crop.y},${crop.w},${crop.h}`;
+        return cfg;
+      }
+
+      function applyConfigObject(cfg) {
+        if (!cfg || typeof cfg !== 'object') return;
+        if (cfg.size != null) document.getElementById('size').value = String(cfg.size);
+        if (cfg.width != null) document.getElementById('width').value = String(cfg.width);
+        if (cfg.fps != null) document.getElementById('fps').value = String(cfg.fps);
+        if (cfg.start != null) document.getElementById('start').value = String(cfg.start);
+        if (cfg.end != null) document.getElementById('end').value = String(cfg.end);
+        document.getElementById('transparent').checked = !!cfg.transparent;
+        if (cfg.tolerance != null) document.getElementById('tolerance').value = String(cfg.tolerance);
+        if (cfg.format != null) document.getElementById('format').value = String(cfg.format);
+        if (cfg.webpQuality != null) document.getElementById('webpQuality').value = String(cfg.webpQuality);
+        document.getElementById('webpLossless').checked = !!cfg.webpLossless;
+
+        // crop peut être "x,y,w,h"
+        if (typeof cfg.crop === 'string' && cfg.crop.includes(',')) {
+          const parts = cfg.crop.split(',').map(s => Number(s.trim()));
+          if (parts.length === 4 && parts.every(n => Number.isFinite(n))) {
+            crop = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+            if (hasFrame) {
+              redrawBaseFrame();
+              drawOverlay({
+                x: Math.round(crop.x * frameCanvas.width),
+                y: Math.round(crop.y * frameCanvas.height),
+                w: Math.round(crop.w * frameCanvas.width),
+                h: Math.round(crop.h * frameCanvas.height),
+              });
+            }
+          }
+        } else {
+          crop = null;
+          if (hasFrame) redrawBaseFrame();
+        }
+      }
+
+      saveConfigBtn.addEventListener('click', () => {
+        const outputName = (document.getElementById('outputName').value || 'sprite').trim() || 'sprite';
+        const safe = outputName.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'sprite';
+        const cfg = getConfigObject();
+        downloadJson(`${safe}.config.json`, cfg);
+      });
+
+      loadConfigBtn.addEventListener('click', () => configInput.click());
+      configInput.addEventListener('change', async (e) => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        try {
+          const text = await f.text();
+          const cfg = JSON.parse(text);
+          applyConfigObject(cfg);
+          setStatus('ok', `Config chargée: ${f.name}`);
+        } catch (err) {
+          setStatus('err', `Impossible de charger la config: ${String(err)}`);
+        } finally {
+          // reset input so selecting same file again triggers change
+          configInput.value = '';
+        }
+      });
+
+      pickBtn.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', (e) => setFile(e.target.files?.[0] || null));
+
+      dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.borderColor = 'rgba(110,231,255,0.55)'; });
+      dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'rgba(255,255,255,0.22)'; });
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'rgba(255,255,255,0.22)';
+        const f = e.dataTransfer.files?.[0];
+        if (f) setFile(f);
+      });
+
+      pickDirBtn.addEventListener('click', async () => {
+        pickDirBtn.disabled = true;
+        try {
+          const res = await fetch('/pick-output-dir', { method: 'POST' });
+          const data = await res.json();
+          if (!data.ok) {
+            setStatus('err', data.error || 'Erreur');
+            return;
+          }
+          if (data.selected) {
+            document.getElementById('outputDir').value = data.selected;
+            setStatus('', '');
+          }
+        } catch (e) {
+          setStatus('err', String(e));
+        } finally {
+          pickDirBtn.disabled = false;
+        }
+      });
+
+      captureBtn.addEventListener('click', () => {
+        if (!video.src) return;
+        const vw = video.videoWidth || 1280;
+        const vh = video.videoHeight || 720;
+        frameCanvas.width = vw;
+        frameCanvas.height = vh;
+        ctx.drawImage(video, 0, 0, vw, vh);
+        hasFrame = true;
+        if (crop) {
+          const rect = {
+            x: Math.round(crop.x * frameCanvas.width),
+            y: Math.round(crop.y * frameCanvas.height),
+            w: Math.round(crop.w * frameCanvas.width),
+            h: Math.round(crop.h * frameCanvas.height),
+          };
+          drawOverlay(rect);
+        }
+      });
+
+      clearCropBtn.addEventListener('click', () => {
+        crop = null;
+        drag = null;
+        if (hasFrame) redrawBaseFrame();
+        else ctx.clearRect(0, 0, frameCanvas.width, frameCanvas.height);
+      });
+
+      frameCanvas.addEventListener('mousedown', (e) => {
+        if (!hasFrame) return;
+        const r = frameCanvas.getBoundingClientRect();
+        const x = (e.clientX - r.left) * (frameCanvas.width / r.width);
+        const y = (e.clientY - r.top) * (frameCanvas.height / r.height);
+        drag = { sx: x, sy: y, ex: x, ey: y };
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!drag || !hasFrame) return;
+        const r = frameCanvas.getBoundingClientRect();
+        const x = (e.clientX - r.left) * (frameCanvas.width / r.width);
+        const y = (e.clientY - r.top) * (frameCanvas.height / r.height);
+        drag.ex = x;
+        drag.ey = y;
+        redrawBaseFrame();
+        const rect = dragToRect(drag);
+        if (rect) drawOverlay(rect);
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (!drag || !hasFrame) return;
+        const rect = dragToRect(drag);
+        drag = null;
+        redrawBaseFrame();
+        if (rect) {
+          setCropFromRect(rect);
+          drawOverlay(rect);
+        } else {
+          crop = null;
+        }
+      });
+
+      genBtn.addEventListener('click', async () => {
+        if (!currentFile) return;
+        genBtn.disabled = true;
+        setStatus('', 'Génération en cours…');
+        setDownloads(null, null);
+        metaEl.textContent = '';
+
+        const fd = new FormData();
+        fd.append('file', currentFile);
+        fd.append('outputName', document.getElementById('outputName').value);
+        fd.append('outputDir', document.getElementById('outputDir').value);
+        fd.append('size', document.getElementById('size').value);
+        fd.append('width', document.getElementById('width').value);
+        fd.append('fps', document.getElementById('fps').value);
+        fd.append('start', document.getElementById('start').value);
+        fd.append('end', document.getElementById('end').value);
+        fd.append('transparent', document.getElementById('transparent').checked ? 'true' : 'false');
+        fd.append('tolerance', document.getElementById('tolerance').value);
+        fd.append('format', document.getElementById('format').value);
+        fd.append('webpQuality', document.getElementById('webpQuality').value);
+        fd.append('webpLossless', document.getElementById('webpLossless').checked ? 'true' : 'false');
+        if (crop) {
+          fd.append('crop', `${crop.x},${crop.y},${crop.w},${crop.h}`);
+        }
+
+        try {
+          const res = await fetch('/generate', { method: 'POST', body: fd });
+          const data = await res.json();
+          if (!data.ok) {
+            setStatus('err', data.error || 'Erreur');
+            genBtn.disabled = false;
+            return;
+          }
+          const where = data.writtenTo ? ` (écrit dans: ${data.writtenTo})` : '';
+          setStatus('ok', 'Terminé. Télécharge le PNG + JSON ci-dessous.' + where);
+          setDownloads(data.downloads.png, data.downloads.json);
+          metaEl.textContent = data.meta ? JSON.stringify(data.meta, null, 2) : '(JSON indisponible)';
+        } catch (e) {
+          setStatus('err', String(e));
+        } finally {
+          genBtn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
+

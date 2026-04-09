@@ -114,7 +114,7 @@ sudo ln -s $(pwd)/mp4-to-sprite.py /usr/local/bin/mp4-to-sprite
   --transparent
 ```
 
-#### 6. Spritesheet multilignes (ajouter une ligne à un fichier existant)
+#### 6. Spritesheet multilignes (une animation = une ligne)
 
 ```bash
 # Première ligne (ligne 0)
@@ -126,6 +126,11 @@ sudo ln -s $(pwd)/mp4-to-sprite.py /usr/local/bin/mp4-to-sprite
 # Troisième ligne (ligne 2)
 ./mp4-to-sprite.py neutre.mp4 --size=128 --width=128 --transparent --output=familier.png --line=2
 ```
+
+Le script génère aussi automatiquement un JSON adjacent: `familier.json` (même nom que le PNG).
+
+**Limite importante (React Native)**: en mode `--line`, **chaque ligne** ne doit pas dépasser **4096px de large**.
+Si une ligne dépasse, réduis `--fps`, raccourcis le segment (`--end`), ou baisse `--size` (ou utilise une animation plus courte).
 
 #### 7. Utilisation avec fichier de configuration
 
@@ -162,6 +167,7 @@ EOF
 | `--output`, `-o` | string | input-sprite.png | Nom du fichier de sortie |
 | `--line` | int | - | Numéro de ligne (0-indexed) pour spritesheet multilignes |
 | `--config`, `-c` | string | - | Fichier de configuration JSON avec options par défaut |
+| `--name` | string | - | Nom d’animation dans le JSON (défaut: nom du fichier d’entrée) |
 
 ### 💡 Conseils sur les options
 
@@ -342,10 +348,10 @@ Le script `generate-spritesheet-batch.py` permet de générer automatiquement un
 
 ```python
 REQUIRED_FILES = [
-    ("joyeux", 0, "Animation joyeuse"),
-    ("triste", 1, "Animation triste"),
-    ("neutre", 2, "Animation neutre"),
-    ("fatigue", 3, "Animation fatigue"),
+    ("joyeux", "Animation joyeuse"),
+    ("triste", "Animation triste"),
+    ("neutre", "Animation neutre"),
+    ("fatigue", "Animation fatigue"),
     # Ajoutez d'autres animations ici
 ]
 ```
@@ -371,7 +377,7 @@ Le script va :
 - ✅ Vérifier que tous les fichiers requis sont présents
 - ⚠️ Afficher une alerte pour les fichiers manquants
 - 🎬 Générer le spritesheet multilignes automatiquement
-- 📊 Afficher un résumé avec le code React à utiliser
+- 🧾 Générer/mettre à jour automatiquement `familier.json` (même nom que le PNG)
 
 #### 4. Exemple avec fichier de configuration
 
@@ -393,7 +399,8 @@ EOF
 
 #### 5. Utilisation dans React
 
-Le script génère automatiquement le code React à utiliser :
+Le JSON généré (`familier.json`) contient tout le paramétrage (frameWidth/frameHeight + animations/line/frames).
+Les apps n’ont qu’à lire ce JSON pour utiliser la spritesheet.
 
 ```javascript
 const spriteSheet = {
@@ -401,10 +408,10 @@ const spriteSheet = {
   frameHeight: 128,
   frameWidth: 128,
   animations: {
-    joyeux: { line: 0 },   // Animation joyeuse
-    triste: { line: 1 },   // Animation triste
-    neutre: { line: 2 },   // Animation neutre
-    fatigue: { line: 3 },  // Animation fatigue
+    joyeux: { line: 0, frames: 12 },   // Animation joyeuse
+    triste: { line: 1, frames: 12 },   // Animation triste
+    neutre: { line: 2, frames: 12 },   // Animation neutre
+    fatigue: { line: 3, frames: 12 },  // Animation fatigue
   }
 };
 ```
@@ -575,3 +582,25 @@ Pour toute question ou problème, ouvre une issue sur le dépôt.
 ---
 
 Fait avec ❤️ pour les développeurs React/Capacitor
+
+## 🖥️ Visualiseur / générateur (UI web locale)
+
+Pour simplifier la génération, une petite UI locale permet de:
+- Prévisualiser le MP4
+- Ajuster les paramètres (`start/end/fps/size/width/transparent/tolerance`)
+- (Optionnel) Définir un **crop** via un rectangle de sélection (UI) ou via `--crop` (CLI)
+- Générer **le PNG + le JSON adjacent** (même nom en `.json`)
+- (Optionnel) Écrire directement les fichiers dans un **dossier de sortie** choisi
+- (Optionnel) Choisir ce dossier via un **sélecteur natif** (“Choisir…”) si une session desktop est disponible
+- **Sauvegarder / charger une config** JSON (pour réutiliser les mêmes paramètres)
+- Choisir un format de sortie **PNG / WebP / les deux**
+
+### Lancer l’UI
+
+```bash
+cd mp4-to-png/ui
+python3 -m pip install -r requirements.txt --break-system-packages
+python3 app.py
+```
+
+Puis ouvre l’URL affichée (par défaut `http://127.0.0.1:5179`).

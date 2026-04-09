@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Script de génération batch pour créer un spritesheet multilignes
-Vérifie que tous les fichiers requis sont présents avant de générer
+Script de génération batch pour créer un spritesheet multilignes + JSON associé.
+Vérifie que tous les fichiers requis sont présents avant de générer.
+Une animation = une ligne (0-indexed) dans la spritesheet.
 """
 
 import argparse
@@ -98,10 +99,11 @@ def display_status(found, missing):
     
     return len(missing) == 0
 
-def generate_spritesheets(source_dir, output_dir, config_file=None):
+def generate_multiline_spritesheet(source_dir, output_png, config_file=None):
     """
-    Génère un spritesheet par animation en appelant mp4-to-sprite.py pour chaque fichier
-    Chaque animation génère son propre fichier avec division automatique si > 4096px
+    Génère un spritesheet multilignes (un seul PNG) en appelant mp4-to-sprite.py pour chaque animation.
+    Chaque animation est placée sur une ligne dédiée (index selon REQUIRED_FILES).
+    Le JSON adjacent (<output>.json) est mis à jour à chaque appel.
     """
     found, missing = check_required_files(source_dir)
     
@@ -122,7 +124,7 @@ def generate_spritesheets(source_dir, output_dir, config_file=None):
     print("🎬 GÉNÉRATION DES SPRITESHEETS")
     print("=" * 70)
     print(f"📁 Dossier source: {source_dir}")
-    print(f"📁 Dossier de sortie: {output_dir}")
+    print(f"🖼️  Spritesheet de sortie: {output_png}")
     print()
     
     # Vérifie que mp4-to-sprite.py existe
@@ -140,21 +142,17 @@ def generate_spritesheets(source_dir, output_dir, config_file=None):
     # Ajoute les options de config si un fichier est fourni
     if config_file:
         base_cmd.extend(["--config", config_file])
-    
-    # Crée le dossier de sortie s'il n'existe pas
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    
-    # Génère un spritesheet par animation
+
+    # Génère un spritesheet multilignes
     success_count = 0
     fail_count = 0
     
-    print(f"🔄 Génération de {len(found)} spritesheet(s)...")
+    print(f"🔄 Génération de {len(found)} animation(s) dans un spritesheet multilignes...")
     print()
     
     for i, (file_name, description, file_path) in enumerate(found, 1):
-        output_file = output_path / f"{file_name}.png"
-        print(f"📹 [{i}/{len(found)}] {file_name} ({description})")
+        line = i - 1
+        print(f"📹 [{i}/{len(found)}] {file_name} ({description}) → ligne {line}")
         
         # Construit la commande pour ce fichier
         cmd = base_cmd.copy()
@@ -163,7 +161,9 @@ def generate_spritesheets(source_dir, output_dir, config_file=None):
             "--size", str(DEFAULT_CONFIG["size"]),
             "--fps", str(DEFAULT_CONFIG["fps"]),
             "--start", str(DEFAULT_CONFIG["start"]),
-            "--output", str(output_file),
+            "--output", str(output_png),
+            "--line", str(line),
+            "--name", str(file_name),
         ])
         
         # Ajoute les options conditionnelles
@@ -185,7 +185,7 @@ def generate_spritesheets(source_dir, output_dir, config_file=None):
                 text=True,
                 check=True
             )
-            print(f"      ✅ {file_name}.png généré avec succès")
+            print(f"      ✅ Ligne {line} générée avec succès")
             success_count += 1
         except subprocess.CalledProcessError as e:
             print(f"      ❌ Erreur lors de la génération de {file_name}")
@@ -213,42 +213,37 @@ def generate_spritesheets(source_dir, output_dir, config_file=None):
     
     if success_count > 0:
         print()
-        print("💡 Utilisation dans React Native:")
-        print(f"   const animations = {{")
-        for file_name, description, _ in found:
-            output_file = output_path / f"{file_name}.png"
-            if output_file.exists():
-                print(f"     {file_name}: {{")
-                print(f"       src: '/assets/{file_name}.png',")
-                print(f"       frameHeight: {DEFAULT_CONFIG['size']},")
-                if DEFAULT_CONFIG['width']:
-                    print(f"       frameWidth: {DEFAULT_CONFIG['width']},")
-                print(f"     }},  // {description}")
-        print(f"   }};")
+        output_png_path = Path(output_png)
+        output_json_path = output_png_path.with_suffix(".json")
+        print("💡 JSON prêt pour l’app:")
+        print(f"   - PNG : {output_png_path}")
+        print(f"   - JSON: {output_json_path}")
+        print()
+        print("   Charge le JSON et utilise spriteSheet.animations['nom'] pour obtenir line/frames.")
     
     if fail_count > 0:
         sys.exit(1)
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Génère un spritesheet par animation à partir de vidéos MP4',
+        description='Génère un spritesheet multilignes (un PNG) à partir de vidéos MP4',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Exemples:
-  %(prog)s ./videos --output-dir=sprites
-  %(prog)s ./videos --output-dir=sprites --config=config.json
-  %(prog)s ./videos --output-dir=sprites --size=256 --width=256
+  %(prog)s ./videos --output=familier.png
+  %(prog)s ./videos --output=familier.png --config=config.json
+  %(prog)s ./videos --output=familier.png --size=256 --width=256
 
 Le script vérifie d'abord que tous les fichiers requis sont présents,
-puis génère un spritesheet par animation (chaque animation dans son propre fichier).
-Les spritesheets sont automatiquement divisés en plusieurs lignes si > 4096px.
+puis génère un spritesheet multilignes (une animation = une ligne).
+Le JSON adjacent (<output>.json) est généré/mis à jour automatiquement.
         """
     )
     
     parser.add_argument('source_dir', 
                        help='Dossier contenant les fichiers MP4')
-    parser.add_argument('--output-dir', '-o', required=True,
-                       help='Dossier de sortie pour les spritesheets PNG')
+    parser.add_argument('--output', '-o', required=True,
+                       help='Fichier PNG de sortie (spritesheet multilignes)')
     parser.add_argument('--config', '-c',
                        help='Fichier de configuration JSON (optionnel)')
     parser.add_argument('--size', type=int,
@@ -274,7 +269,7 @@ Les spritesheets sont automatiquement divisés en plusieurs lignes si > 4096px.
         sys.exit(1)
     
     # Génère les spritesheets
-    generate_spritesheets(args.source_dir, args.output_dir, args.config)
+    generate_multiline_spritesheet(args.source_dir, args.output, args.config)
 
 if __name__ == '__main__':
     main()
